@@ -135,12 +135,12 @@ class CLIPLoRACoOp(nn.Module):
         self.text_prototypes = None
         self.class_names = None
 
+        # Move to device BEFORE building text features (so embeddings are on correct device)
+        self.to(self.device)
+
         # Load prompt.json if provided
         if prompt_json_path is not None and os.path.exists(prompt_json_path):
             self.build_text_features(prompt_json_path)
-
-        # Move to device
-        self.to(self.device)
 
         # Print configuration info
         self._print_mode_info()
