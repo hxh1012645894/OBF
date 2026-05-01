@@ -17,19 +17,27 @@ from semilearn.nets import clip_zero_shot, clip_lora_coop, clip_coop_only, clip_
 
 def get_clip_model(model_type: str, num_classes: int, prompt_json_path: str, **kwargs):
     """Get CLIP model by type name."""
-    model_factories = {
-        'clip_zero_shot': clip_zero_shot,
-        'clip_lora_coop': clip_lora_coop,
-        'clip_coop_only': clip_coop_only,
-        'clip_lora_only': clip_lora_only,
+    # Factory functions already set mode-specific parameters
+    # Only pass common parameters that factory functions don't override
+    common_kwargs = {
+        'num_classes': num_classes,
+        'prompt_json_path': prompt_json_path,
+        'temperature': kwargs.get('temperature', 0.07),
+        'lora_r': kwargs.get('lora_r', 8),
+        'lora_alpha': kwargs.get('lora_alpha', 16),
+        'lora_dropout': kwargs.get('lora_dropout', 0.1),
+        'num_context_tokens': kwargs.get('num_context_tokens', 4),
+        'pretrained': True,
     }
 
-    factory = model_factories.get(model_type, clip_lora_coop)
-    return factory(
-        num_classes=num_classes,
-        prompt_json_path=prompt_json_path,
-        **kwargs
-    )
+    if model_type == 'clip_zero_shot':
+        return clip_zero_shot(**common_kwargs)
+    elif model_type == 'clip_coop_only':
+        return clip_coop_only(**common_kwargs)
+    elif model_type == 'clip_lora_only':
+        return clip_lora_only(**common_kwargs)
+    else:
+        return clip_lora_coop(**common_kwargs)
 
 
 def main():
@@ -44,9 +52,7 @@ def main():
     parser.add_argument('--checkpoint_path', type=str, default=None,
                         help='Path to checkpoint (optional, for trained models)')
 
-    # LoRA/CoOp configurations (for non-zero-shot modes)
-    parser.add_argument('--use_lora', type=bool, default=True)
-    parser.add_argument('--use_coop', type=bool, default=True)
+    # LoRA/CoOp configurations (for trained models with custom settings)
     parser.add_argument('--lora_r', type=int, default=8)
     parser.add_argument('--lora_alpha', type=int, default=16)
     parser.add_argument('--num_context_tokens', type=int, default=4)
@@ -85,12 +91,10 @@ def main():
         model_type=args.model_type,
         num_classes=args.num_classes,
         prompt_json_path=args.prompt_json_path,
-        use_lora=args.use_lora if args.model_type != 'clip_zero_shot' else False,
-        use_coop=args.use_coop if args.model_type != 'clip_zero_shot' else False,
+        temperature=args.temperature,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        num_context_tokens=args.num_context_tokens,
-        temperature=args.temperature
+        num_context_tokens=args.num_context_tokens
     )
 
     # Load checkpoint if provided
