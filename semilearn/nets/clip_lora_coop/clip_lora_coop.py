@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 # OBF-MANet-V2: Multi-modal Semi-supervised Learning with CLIP + LoRA + CoOp
+# Refactored with ablation experiment mode switches
 
 import os
 import json
@@ -16,15 +17,22 @@ from peft import LoraConfig, get_peft_model
 
 class CLIPLoRACoOp(nn.Module):
     """
-    CLIP with LoRA fine-tuning on visual encoder and CoOp (Context Optimization) on text encoder.
+    CLIP with configurable training modes for ablation experiments.
 
-    This model combines:
-    1. LoRA adapters on visual encoder's attention layers (q_proj, v_proj)
-    2. Learnable soft prompts (CoOp) prepended to text prompts
-    3. Hard prompts constructed from class-specific attributes (contour, pattern)
+    Supported modes:
+    1. Full mode (default): LoRA on vision + CoOp on text + multimodal classification
+    2. Zero-shot mode: Frozen CLIP with text prototypes (use_lora=False, use_coop=False)
+    3. Linear probe mode: Frozen vision + linear classifier (use_linear_probe=True)
+    4. Full fine-tuning mode: Unfreeze vision backbone (freeze_vision=False)
+    5. CoOp-only mode: No LoRA, only soft prompts (use_lora=False, use_coop=True)
+    6. LoRA-only mode: No CoOp, only LoRA (use_lora=True, use_coop=False)
 
     Args:
         num_classes (int): Number of classes for classification
+        use_lora (bool): Whether to use LoRA on vision encoder (default: True)
+        use_coop (bool): Whether to use learnable soft prompts (default: True)
+        freeze_vision (bool): Whether to freeze vision backbone (default: True)
+        use_linear_probe (bool): Whether to use linear classifier instead of multimodal (default: False)
         lora_r (int): LoRA rank (default: 8)
         lora_alpha (int): LoRA alpha (default: 16)
         lora_dropout (float): LoRA dropout rate (default: 0.1)
@@ -38,6 +46,10 @@ class CLIPLoRACoOp(nn.Module):
     def __init__(
         self,
         num_classes: int,
+        use_lora: bool = True,
+        use_coop: bool = True,
+        freeze_vision: bool = True,
+        use_linear_probe: bool = False,
         lora_r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.1,
@@ -49,6 +61,12 @@ class CLIPLoRACoOp(nn.Module):
         **kwargs
     ):
         super().__init__()
+
+        # Store mode switches
+        self.use_lora = use_lora
+        self.use_coop = use_coop
+        self.freeze_vision = freeze_vision
+        self.use_linear_probe = use_linear_probe
 
         self.num_classes = num_classes
         self.num_context_tokens = num_context_tokens
@@ -63,35 +81,53 @@ class CLIPLoRACoOp(nn.Module):
 
         # Get embedding dimension from CLIP config
         self.embed_dim = self.clip_model.config.text_config.hidden_size  # Typically 512 for clip-vit-base
+        self.vision_hidden_size = self.clip_model.config.vision_config.hidden_size  # Typically 768 for clip-vit-base
 
-        # ========== 2. Visual Branch - LoRA Fine-tuning ==========
-        # Freeze all visual encoder parameters
-        for param in self.clip_model.vision_model.parameters():
-            param.requires_grad = False
+        # ========== 2. Visual Branch - Configurable Fine-tuning ==========
 
-        # Configure LoRA for visual encoder attention layers
-        lora_config = LoraConfig(
-            r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            target_modules=['q_proj', 'v_proj'],  # Target Query and Value projections
-            modules_to_save=None,
-        )
+        # Freeze/Unfreeze vision backbone
+        if self.freeze_vision:
+            # Freeze all visual encoder parameters
+            for param in self.clip_model.vision_model.parameters():
+                param.requires_grad = False
+        else:
+            # Unfreeze all visual encoder parameters for full fine-tuning
+            for param in self.clip_model.vision_model.parameters():
+                param.requires_grad = True
 
-        # Apply LoRA to vision model
-        self.clip_model.vision_model = get_peft_model(self.clip_model.vision_model, lora_config)
+        # LoRA: Only apply when use_lora=True AND freeze_vision=True
+        # (LoRA is meant for efficient fine-tuning when backbone is frozen)
+        if self.use_lora and self.freeze_vision:
+            lora_config = LoraConfig(
+                r=lora_r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+                target_modules=['q_proj', 'v_proj'],  # Target Query and Value projections
+                modules_to_save=None,
+            )
+            # Apply LoRA to vision model
+            self.clip_model.vision_model = get_peft_model(self.clip_model.vision_model, lora_config)
+
+        # Linear probe classifier: Only when use_linear_probe=True
+        if self.use_linear_probe:
+            # Use vision_hidden_size for linear classifier input
+            self.classifier = nn.Linear(self.vision_hidden_size, num_classes)
 
         # ========== 3. Text Branch - CoOp (Context Optimization) ==========
-        # Freeze all text encoder parameters
+        # Freeze all text encoder parameters (always frozen)
         for param in self.clip_model.text_model.parameters():
             param.requires_grad = False
 
-        # Learnable soft prompts (context tokens)
-        # Shape: [num_context_tokens, embed_dim]
-        # Initialize with random normal distribution (following CoOp paper)
-        self.context_tokens = nn.Parameter(
-            torch.randn(num_context_tokens, self.embed_dim) * 0.02
-        )
+        # Learnable soft prompts (context tokens) - only when use_coop=True
+        if self.use_coop:
+            # Shape: [num_context_tokens, embed_dim]
+            # Initialize with random normal distribution (following CoOp paper)
+            self.context_tokens = nn.Parameter(
+                torch.randn(num_context_tokens, self.embed_dim) * 0.02
+            )
+        else:
+            # No learnable context tokens
+            self.context_tokens = None
 
         # ========== 4. Build Text Prototypes ==========
         # Text prototypes will be computed from class prompts
@@ -105,6 +141,33 @@ class CLIPLoRACoOp(nn.Module):
 
         # Move to device
         self.to(self.device)
+
+        # Print configuration info
+        self._print_mode_info()
+
+    def _print_mode_info(self) -> None:
+        """Print current mode configuration."""
+        mode_name = self._get_mode_name()
+        print(f"[CLIPLoRACoOp] Mode: {mode_name}")
+        print(f"  - use_lora: {self.use_lora}")
+        print(f"  - use_coop: {self.use_coop}")
+        print(f"  - freeze_vision: {self.freeze_vision}")
+        print(f"  - use_linear_probe: {self.use_linear_probe}")
+
+    def _get_mode_name(self) -> str:
+        """Get human-readable mode name."""
+        if self.use_linear_probe:
+            return "Linear Probe"
+        elif not self.freeze_vision:
+            return "Full Fine-tuning"
+        elif self.use_lora and self.use_coop:
+            return "LoRA + CoOp (Full)"
+        elif self.use_lora and not self.use_coop:
+            return "LoRA-only"
+        elif not self.use_lora and self.use_coop:
+            return "CoOp-only"
+        else:
+            return "Zero-shot CLIP"
 
     def build_text_features(self, json_path: str) -> torch.Tensor:
         """
@@ -124,7 +187,7 @@ class CLIPLoRACoOp(nn.Module):
         1. Read structured attributes (prefix, Contour, Pattern) from JSON
         2. Dynamically construct hard prompt: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
         3. Tokenize and get token embeddings
-        4. Prepend learnable context tokens (CoOp)
+        4. Prepend learnable context tokens (CoOp) if use_coop=True
         5. Pass through frozen text encoder
         6. L2 normalize and store as text prototype
 
@@ -181,40 +244,37 @@ class CLIPLoRACoOp(nn.Module):
                 # Get token embeddings (before position embedding)
                 token_embeds = self.clip_model.text_model.get_input_embeddings()(input_ids)
 
-            # ========== Prepend Context Tokens (CoOp) ==========
-            # token_embeds shape: [1, seq_len, embed_dim]
-            # context_tokens shape: [num_context_tokens, embed_dim]
+            # ========== Prepend Context Tokens (CoOp) - Conditional ==========
+            if self.use_coop and self.context_tokens is not None:
+                # With CoOp: prepend learnable soft prompts
+                # [SOS, ctx_1, ctx_2, ..., ctx_M, word_tokens, EOS]
 
-            # Get context tokens as [1, num_context_tokens, embed_dim]
-            ctx_tokens = self.context_tokens.unsqueeze(0)  # [1, num_ctx, embed_dim]
+                ctx_tokens = self.context_tokens.unsqueeze(0)  # [1, num_ctx, embed_dim]
+                sos_embed = token_embeds[:, 0:1, :]  # [1, 1, embed_dim]
+                word_embeds = token_embeds[:, 1:, :]  # [1, seq_len-1, embed_dim]
 
-            # For CoOp: [SOS, ctx_1, ctx_2, ..., ctx_M, word_tokens, EOS]
-            # Get SOS token embedding (position 0)
-            sos_embed = token_embeds[:, 0:1, :]  # [1, 1, embed_dim]
+                # Calculate available space: 77 = SOS(1) + Context(M) + Words(L) + EOS(1)
+                available_space = 77 - 1 - self.num_context_tokens - 1
+                word_embeds_truncated = word_embeds[:, :available_space, :]
 
-            # Get remaining word tokens (excluding SOS)
-            word_embeds = token_embeds[:, 1:, :]  # [1, seq_len-1, embed_dim]
+                eos_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 49407
+                eos_embed = self.clip_model.text_model.get_input_embeddings()(
+                    torch.tensor([[eos_token_id]], device=self.device)
+                )
 
-            # Calculate available space for word tokens
-            # Total: 77 = SOS(1) + Context(M) + Words(L) + EOS(1)
-            available_space = 77 - 1 - self.num_context_tokens - 1
-            word_embeds_truncated = word_embeds[:, :available_space, :]
+                combined_embeds = torch.cat([
+                    sos_embed,
+                    ctx_tokens,
+                    word_embeds_truncated,
+                    eos_embed
+                ], dim=1)
 
-            # Get EOS token embedding
-            eos_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 49407  # CLIP's EOT token
-            eos_embed = self.clip_model.text_model.get_input_embeddings()(
-                torch.tensor([[eos_token_id]], device=self.device)
-            )  # [1, 1, embed_dim]
+            else:
+                # Without CoOp: use pure hard prompt tokens
+                # Just use the original token embeddings (already includes SOS and EOS)
+                combined_embeds = token_embeds
 
-            # Concatenate: SOS + context + words + EOS
-            combined_embeds = torch.cat([
-                sos_embed,      # [1, 1, embed_dim]
-                ctx_tokens,     # [1, num_ctx, embed_dim]
-                word_embeds_truncated,  # [1, L, embed_dim]
-                eos_embed       # [1, 1, embed_dim]
-            ], dim=1)  # [1, total_len, embed_dim]
-
-            # Create position ids (CLIP uses learned position embeddings)
+            # Create position ids
             position_ids = torch.arange(combined_embeds.shape[1], device=self.device).unsqueeze(0)
 
             # Pass through text encoder
@@ -269,20 +329,24 @@ class CLIPLoRACoOp(nn.Module):
             with torch.no_grad():
                 token_embeds = self.clip_model.text_model.get_input_embeddings()(input_ids)
 
-            # Prepend context tokens
-            ctx_tokens = self.context_tokens.unsqueeze(0)
-            sos_embed = token_embeds[:, 0:1, :]
-            word_embeds = token_embeds[:, 1:, :]
+            # Prepend context tokens if use_coop=True
+            if self.use_coop and self.context_tokens is not None:
+                ctx_tokens = self.context_tokens.unsqueeze(0)
+                sos_embed = token_embeds[:, 0:1, :]
+                word_embeds = token_embeds[:, 1:, :]
 
-            available_space = 77 - 1 - self.num_context_tokens - 1
-            word_embeds_truncated = word_embeds[:, :available_space, :]
+                available_space = 77 - 1 - self.num_context_tokens - 1
+                word_embeds_truncated = word_embeds[:, :available_space, :]
 
-            eos_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 49407
-            eos_embed = self.clip_model.text_model.get_input_embeddings()(
-                torch.tensor([[eos_token_id]], device=self.device)
-            )
+                eos_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 49407
+                eos_embed = self.clip_model.text_model.get_input_embeddings()(
+                    torch.tensor([[eos_token_id]], device=self.device)
+                )
 
-            combined_embeds = torch.cat([sos_embed, ctx_tokens, word_embeds_truncated, eos_embed], dim=1)
+                combined_embeds = torch.cat([sos_embed, ctx_tokens, word_embeds_truncated, eos_embed], dim=1)
+            else:
+                combined_embeds = token_embeds
+
             position_ids = torch.arange(combined_embeds.shape[1], device=self.device).unsqueeze(0)
 
             with torch.no_grad():
@@ -305,7 +369,7 @@ class CLIPLoRACoOp(nn.Module):
         **kwargs
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass for multi-modal classification.
+        Forward pass with configurable output routing.
 
         Args:
             x (torch.Tensor): Input images [B, C, H, W]
@@ -313,38 +377,33 @@ class CLIPLoRACoOp(nn.Module):
 
         Returns:
             dict with keys:
-                - 'logits': Classification logits [B, num_classes] (cosine_sim / temperature)
+                - 'logits': Classification logits [B, num_classes]
                 - 'feat': Visual features [B, embed_dim] (normalized)
                 - 'proj_feat': Same as feat for compatibility with existing algorithms
         """
-        # Ensure text prototypes are built
-        if self.text_prototypes is None:
-            raise ValueError("Text prototypes not built. Call build_text_features() or build_simple_text_features() first.")
-
-        # ========== Visual Feature Extraction with LoRA ==========
-        # Preprocess images for CLIP
-        # CLIP expects images normalized with specific mean/std
-        # The processor handles this, but we can also do it manually
-
-        # Get visual features through LoRA-adapted vision encoder
+        # ========== Visual Feature Extraction ==========
         vision_outputs = self.clip_model.vision_model(pixel_values=x, return_dict=True)
-
-        # Get pooled visual features
-        # CLIP vision model has pooler_output (after attention pooling)
-        visual_features = vision_outputs.pooler_output  # [B, embed_dim]
+        visual_features = vision_outputs.pooler_output  # [B, vision_hidden_size]
 
         # Normalize visual features
         visual_features_norm = F.normalize(visual_features, p=2, dim=-1)
 
-        # ========== Compute Cosine Similarity with Text Prototypes ==========
-        # visual_features_norm: [B, embed_dim]
-        # text_prototypes: [num_classes, embed_dim] (already normalized)
+        # ========== Output Routing ==========
+        if self.use_linear_probe:
+            # Linear probe mode: use linear classifier
+            logits = self.classifier(visual_features)  # [B, num_classes]
+        else:
+            # Multimodal mode: compute cosine similarity with text prototypes
+            if self.text_prototypes is None:
+                raise ValueError(
+                    "Text prototypes not built. Call build_text_features() or "
+                    "build_simple_text_features() first, or set use_linear_probe=True."
+                )
 
-        # Compute similarity
-        cosine_sim = torch.mm(visual_features_norm, self.text_prototypes.T)  # [B, num_classes]
-
-        # Scale by temperature
-        logits = cosine_sim / self.temperature
+            # visual_features_norm: [B, embed_dim]
+            # text_prototypes: [num_classes, embed_dim] (already normalized)
+            cosine_sim = torch.mm(visual_features_norm, self.text_prototypes.T)  # [B, num_classes]
+            logits = cosine_sim / self.temperature
 
         # ========== Return Results ==========
         result_dict = {
@@ -373,12 +432,14 @@ class CLIPLoRACoOp(nn.Module):
         """
         Re-compute text prototypes with current context_tokens.
         Call this after context_tokens are updated during training.
+        Only effective when use_coop=True.
         """
+        if not self.use_coop:
+            return  # No need to update if CoOp is disabled
+
         if self.class_names is None:
             return
 
-        # Re-build text features with current context_tokens
-        # This will use the updated learnable soft prompts
         if hasattr(self, '_prompt_json_path') and self._prompt_json_path is not None:
             self.build_text_features(self._prompt_json_path)
         else:
@@ -389,24 +450,22 @@ class CLIPLoRACoOp(nn.Module):
         Return parameters that should not use weight decay.
         Context tokens typically don't use weight decay in CoOp.
         """
-        return {'context_tokens'}
+        if self.use_coop:
+            return {'context_tokens'}
+        return set()
 
     def get_trainable_parameters(self) -> Dict[str, torch.Tensor]:
         """
-        Get all trainable parameters (LoRA + context tokens).
+        Get all trainable parameters based on current mode.
 
         Returns:
             dict of parameter names and tensors
         """
         trainable_params = {}
 
-        # LoRA parameters from vision encoder
-        for name, param in self.clip_model.vision_model.named_parameters():
+        for name, param in self.named_parameters():
             if param.requires_grad:
                 trainable_params[name] = param
-
-        # Context tokens
-        trainable_params['context_tokens'] = self.context_tokens
 
         return trainable_params
 
@@ -428,9 +487,15 @@ class CLIPLoRACoOp(nn.Module):
         """
         Extra representation for print(model).
         """
+        mode_name = self._get_mode_name()
         return (
+            f"mode={mode_name}, "
             f"num_classes={self.num_classes}, "
-            f"num_context_tokens={self.num_context_tokens}, "
+            f"use_lora={self.use_lora}, "
+            f"use_coop={self.use_coop}, "
+            f"freeze_vision={self.freeze_vision}, "
+            f"use_linear_probe={self.use_linear_probe}, "
+            f"num_context_tokens={self.num_context_tokens if self.use_coop else 'N/A'}, "
             f"temperature={self.temperature}, "
             f"pretrained_model={self.pretrained_model_name}"
         )
@@ -442,6 +507,10 @@ def clip_lora_coop(
     pretrained: bool = True,
     pretrained_path: Optional[str] = None,
     prompt_json_path: Optional[str] = None,
+    use_lora: bool = True,
+    use_coop: bool = True,
+    freeze_vision: bool = True,
+    use_linear_probe: bool = False,
     lora_r: int = 8,
     lora_alpha: int = 16,
     lora_dropout: float = 0.1,
@@ -460,6 +529,10 @@ def clip_lora_coop(
         pretrained (bool): Whether to load pretrained CLIP (always True for this model)
         pretrained_path (str): Not used (CLIP loads from HuggingFace)
         prompt_json_path (str): Path to prompt.json for class attributes
+        use_lora (bool): Whether to use LoRA on vision encoder
+        use_coop (bool): Whether to use learnable soft prompts
+        freeze_vision (bool): Whether to freeze vision backbone
+        use_linear_probe (bool): Whether to use linear classifier
         lora_r (int): LoRA rank
         lora_alpha (int): LoRA alpha
         lora_dropout (float): LoRA dropout
@@ -471,6 +544,10 @@ def clip_lora_coop(
     """
     model = CLIPLoRACoOp(
         num_classes=num_classes,
+        use_lora=use_lora,
+        use_coop=use_coop,
+        freeze_vision=freeze_vision,
+        use_linear_probe=use_linear_probe,
         lora_r=lora_r,
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
@@ -482,6 +559,8 @@ def clip_lora_coop(
 
     return model
 
+
+# ========== Preset Factory Functions for Common Modes ==========
 
 def clip_lora_coop_small(
     num_classes: int,
@@ -517,5 +596,108 @@ def clip_lora_coop_large(
         prompt_json_path=prompt_json_path,
         lora_r=16,
         lora_alpha=32,
+        **kwargs
+    )
+
+
+def clip_zero_shot(
+    num_classes: int,
+    pretrained: bool = True,
+    pretrained_path: Optional[str] = None,
+    prompt_json_path: Optional[str] = None,
+    **kwargs
+) -> CLIPLoRACoOp:
+    """Zero-shot CLIP mode: frozen backbone, no LoRA, no CoOp."""
+    return clip_lora_coop(
+        num_classes=num_classes,
+        pretrained=pretrained,
+        pretrained_path=pretrained_path,
+        prompt_json_path=prompt_json_path,
+        use_lora=False,
+        use_coop=False,
+        freeze_vision=True,
+        use_linear_probe=False,
+        **kwargs
+    )
+
+
+def clip_linear_probe(
+    num_classes: int,
+    pretrained: bool = True,
+    pretrained_path: Optional[str] = None,
+    **kwargs
+) -> CLIPLoRACoOp:
+    """Linear probe mode: frozen vision backbone + linear classifier."""
+    return clip_lora_coop(
+        num_classes=num_classes,
+        pretrained=pretrained,
+        pretrained_path=pretrained_path,
+        use_lora=False,
+        use_coop=False,
+        freeze_vision=True,
+        use_linear_probe=True,
+        **kwargs
+    )
+
+
+def clip_coop_only(
+    num_classes: int,
+    pretrained: bool = True,
+    pretrained_path: Optional[str] = None,
+    prompt_json_path: Optional[str] = None,
+    **kwargs
+) -> CLIPLoRACoOp:
+    """CoOp-only mode: no LoRA, only learnable soft prompts."""
+    return clip_lora_coop(
+        num_classes=num_classes,
+        pretrained=pretrained,
+        pretrained_path=pretrained_path,
+        prompt_json_path=prompt_json_path,
+        use_lora=False,
+        use_coop=True,
+        freeze_vision=True,
+        use_linear_probe=False,
+        **kwargs
+    )
+
+
+def clip_lora_only(
+    num_classes: int,
+    pretrained: bool = True,
+    pretrained_path: Optional[str] = None,
+    prompt_json_path: Optional[str] = None,
+    **kwargs
+) -> CLIPLoRACoOp:
+    """LoRA-only mode: LoRA on vision, no CoOp soft prompts."""
+    return clip_lora_coop(
+        num_classes=num_classes,
+        pretrained=pretrained,
+        pretrained_path=pretrained_path,
+        prompt_json_path=prompt_json_path,
+        use_lora=True,
+        use_coop=False,
+        freeze_vision=True,
+        use_linear_probe=False,
+        **kwargs
+    )
+
+
+def clip_full_finetune(
+    num_classes: int,
+    pretrained: bool = True,
+    pretrained_path: Optional[str] = None,
+    prompt_json_path: Optional[str] = None,
+    **kwargs
+) -> CLIPLoRACoOp:
+    """Full fine-tuning mode: unfreeze entire vision backbone."""
+    return clip_lora_coop(
+        num_classes=num_classes,
+        pretrained=pretrained,
+        pretrained_path=pretrained_path,
+        prompt_json_path=prompt_json_path,
+        use_lora=False,  # LoRA not needed when full fine-tuning
+        use_coop=True,
+        freeze_vision=False,  # Unfreeze backbone
+        use_linear_probe=False,
         **kwargs
     )

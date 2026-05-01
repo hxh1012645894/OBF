@@ -8,4 +8,14 @@ from .bert import bert_base_cased, bert_base_uncased, bert_base_cased_multihead,
 from .wave2vecv2 import wave2vecv2_base
 from .hubert import hubert_base
 # Multi-modal models for OBF-MANet-V2
-from .clip_lora_coop import CLIPLoRACoOp, clip_lora_coop, clip_lora_coop_small, clip_lora_coop_large
+from .clip_lora_coop import (
+    CLIPLoRACoOp,
+    clip_lora_coop,
+    clip_lora_coop_small,
+    clip_lora_coop_large,
+    clip_zero_shot,
+    clip_linear_probe,
+    clip_coop_only,
+    clip_lora_only,
+    clip_full_finetune
+)
