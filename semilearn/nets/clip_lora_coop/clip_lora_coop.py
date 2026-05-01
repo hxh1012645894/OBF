@@ -313,6 +313,7 @@ class CLIPLoRACoOp(nn.Module):
             text_feature: Pooled text feature [1, embed_dim]
         """
         seq_len = inputs_embeds.shape[1]
+        bsz = inputs_embeds.shape[0]
 
         # Get position embeddings
         position_embeds = self.clip_model.text_model.embeddings.position_embedding(position_ids)
@@ -320,9 +321,12 @@ class CLIPLoRACoOp(nn.Module):
         # Combine token + position embeddings
         hidden_states = inputs_embeds + position_embeds
 
-        # Create attention masks (all ones for valid tokens)
-        attention_mask = torch.ones((1, seq_len), device=self.device, dtype=torch.long)
-        causal_attention_mask = self._create_causal_mask(seq_len, self.device)
+        # Create attention masks in correct format for CLIP
+        # attention_mask: [bsz, 1, tgt_len, src_len] - all ones for valid tokens
+        attention_mask = torch.ones((bsz, 1, seq_len, seq_len), device=self.device)
+
+        # causal_attention_mask: [bsz, 1, tgt_len, src_len] - causal mask
+        causal_attention_mask = self._create_causal_mask(seq_len, bsz, self.device)
 
         # Pass through encoder layers
         for encoder_layer in self.clip_model.text_model.encoder.layers:
@@ -340,21 +344,22 @@ class CLIPLoRACoOp(nn.Module):
 
         return text_feature
 
-    def _create_causal_mask(self, seq_len: int, device: str) -> torch.Tensor:
+    def _create_causal_mask(self, seq_len: int, bsz: int, device: str) -> torch.Tensor:
         """
         Create causal attention mask for CLIP text encoder.
 
         Args:
             seq_len: Sequence length
+            bsz: Batch size
             device: Device to create mask on
 
         Returns:
-            causal_mask: [1, 1, seq_len, seq_len]
+            causal_mask: [bsz, 1, seq_len, seq_len]
         """
-        # Create lower triangular mask (causal)
+        # Create lower triangular mask (causal) - 0 for valid, -inf for invalid
         mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1)
         mask = mask.masked_fill(mask == 1, float('-inf'))
-        return mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+        return mask.unsqueeze(0).unsqueeze(0).expand(bsz, -1, -1, -1)  # [bsz, 1, seq_len, seq_len]
 
     def build_simple_text_features(self, class_names: List[str]) -> torch.Tensor:
         """
