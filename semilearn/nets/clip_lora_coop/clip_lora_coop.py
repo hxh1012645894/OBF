@@ -241,8 +241,8 @@ class CLIPLoRACoOp(nn.Module):
             input_ids = inputs['input_ids'].to(self.device)
 
             with torch.no_grad():
-                # Get token embeddings (before position embedding)
-                token_embeds = self.clip_model.text_model.get_input_embeddings()(input_ids)
+                # Directly access token embedding layer (compatible with all transformers versions)
+                token_embeds = self.clip_model.text_model.embeddings.token_embedding(input_ids)
 
             # ========== Prepend Context Tokens (CoOp) - Conditional ==========
             if self.use_coop and self.context_tokens is not None:
@@ -258,7 +258,7 @@ class CLIPLoRACoOp(nn.Module):
                 word_embeds_truncated = word_embeds[:, :available_space, :]
 
                 eos_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 49407
-                eos_embed = self.clip_model.text_model.get_input_embeddings()(
+                eos_embed = self.clip_model.text_model.embeddings.token_embedding(
                     torch.tensor([[eos_token_id]], device=self.device)
                 )
 
@@ -327,7 +327,7 @@ class CLIPLoRACoOp(nn.Module):
             input_ids = inputs['input_ids'].to(self.device)
 
             with torch.no_grad():
-                token_embeds = self.clip_model.text_model.get_input_embeddings()(input_ids)
+                token_embeds = self.clip_model.text_model.embeddings.token_embedding(input_ids)
 
             # Prepend context tokens if use_coop=True
             if self.use_coop and self.context_tokens is not None:
@@ -339,7 +339,7 @@ class CLIPLoRACoOp(nn.Module):
                 word_embeds_truncated = word_embeds[:, :available_space, :]
 
                 eos_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 49407
-                eos_embed = self.clip_model.text_model.get_input_embeddings()(
+                eos_embed = self.clip_model.text_model.embeddings.token_embedding(
                     torch.tensor([[eos_token_id]], device=self.device)
                 )
 
