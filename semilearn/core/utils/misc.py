@@ -4,8 +4,7 @@
 import os
 import torch
 import torch.nn as nn
-#import ruamel.yaml as yaml
-import yaml
+import ruamel.yaml as yaml
 from torch.utils.tensorboard import SummaryWriter
 
 def over_write_args_from_dict(args, dict):
@@ -22,8 +21,10 @@ def over_write_args_from_file(args, yml):
     """
     if yml == '':
         return
+    yaml_instance = yaml.YAML(typ='rt')
     with open(yml, 'r', encoding='utf-8') as f:
-        dic = yaml.safe_load(f.read())
+        dic = yaml_instance.load(f)
+        #dic = yaml.load(f.read(), Loader=yaml.Loader)
         for k in dic:
             setattr(args, k, dic[k])
 
