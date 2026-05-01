@@ -113,17 +113,20 @@ class CLIPLoRACoOp(nn.Module):
         JSON format expected:
         {
             "class_name": {
-                "prompt": "A close-up of the class_name fragment. [Contour]: ... [Pattern]: ..."
+                "prefix": "A close-up of the class_name fragment.",
+                "Contour": "The top edge is a smooth original curve...",
+                "Pattern": "It features a curved groove line..."
             },
             ...
         }
 
         For each class:
-        1. Read the pre-built prompt from JSON
-        2. Tokenize and get token embeddings
-        3. Prepend learnable context tokens (CoOp)
-        4. Pass through frozen text encoder
-        5. Store as text prototype for this class
+        1. Read structured attributes (prefix, Contour, Pattern) from JSON
+        2. Dynamically construct hard prompt: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
+        3. Tokenize and get token embeddings
+        4. Prepend learnable context tokens (CoOp)
+        5. Pass through frozen text encoder
+        6. L2 normalize and store as text prototype
 
         Args:
             json_path (str): Path to prompt.json file
@@ -138,7 +141,7 @@ class CLIPLoRACoOp(nn.Module):
         with open(json_path, 'r', encoding='utf-8') as f:
             prompt_data = json.load(f)
 
-        # Extract class names and prompts
+        # Extract class names
         self.class_names = list(prompt_data.keys())
 
         # Ensure num_classes matches
@@ -152,9 +155,15 @@ class CLIPLoRACoOp(nn.Module):
         text_features_list = []
 
         for class_name in self.class_names:
-            # Get the pre-built prompt from JSON
             class_info = prompt_data[class_name]
-            hard_prompt = class_info.get('prompt', f"a photo of {class_name}")
+
+            # ========== Dynamically construct hard prompt ==========
+            # Format: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
+            prefix = class_info.get('prefix', f"A close-up of the {class_name} fragment.")
+            contour = class_info.get('Contour', '')
+            pattern = class_info.get('Pattern', '')
+
+            hard_prompt = f"{prefix} [Contour]: {contour} [Pattern]: {pattern}"
 
             # Tokenize
             inputs = self.tokenizer(
@@ -219,7 +228,7 @@ class CLIPLoRACoOp(nn.Module):
                 # Get the final representation (pooler_output)
                 text_feature = text_outputs.pooler_output  # [1, embed_dim]
 
-                # Normalize
+                # L2 normalize
                 text_feature = F.normalize(text_feature, p=2, dim=-1)
 
             text_features_list.append(text_feature)
