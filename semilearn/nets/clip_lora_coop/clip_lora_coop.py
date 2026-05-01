@@ -277,16 +277,19 @@ class CLIPLoRACoOp(nn.Module):
             # Create position ids
             position_ids = torch.arange(combined_embeds.shape[1], device=self.device).unsqueeze(0)
 
-            # Pass through text encoder
+            # Pass through text encoder (handle different transformers versions)
             with torch.no_grad():
-                text_outputs = self.clip_model.text_model(
-                    inputs_embeds=combined_embeds,
-                    position_ids=position_ids,
-                    return_dict=True
-                )
-
-                # Get the final representation (pooler_output)
-                text_feature = text_outputs.pooler_output  # [1, embed_dim]
+                # Try modern API first, fall back to manual layer-by-layer if needed
+                try:
+                    text_outputs = self.clip_model.text_model(
+                        inputs_embeds=combined_embeds,
+                        position_ids=position_ids,
+                        return_dict=True
+                    )
+                    text_feature = text_outputs.pooler_output
+                except TypeError:
+                    # Fallback for older transformers: manual forward pass
+                    text_feature = self._forward_text_encoder_legacy(combined_embeds, position_ids)
 
                 # L2 normalize
                 text_feature = F.normalize(text_feature, p=2, dim=-1)
@@ -297,6 +300,37 @@ class CLIPLoRACoOp(nn.Module):
         self.text_prototypes = torch.cat(text_features_list, dim=0)  # [num_classes, embed_dim]
 
         return self.text_prototypes
+
+    def _forward_text_encoder_legacy(self, inputs_embeds: torch.Tensor, position_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Manual forward pass for older transformers versions that don't support inputs_embeds.
+
+        Args:
+            inputs_embeds: Token embeddings [1, seq_len, embed_dim]
+            position_ids: Position IDs [1, seq_len]
+
+        Returns:
+            text_feature: Pooled text feature [1, embed_dim]
+        """
+        # Get position embeddings
+        position_embeds = self.clip_model.text_model.embeddings.position_embedding(position_ids)
+
+        # Combine token + position embeddings
+        hidden_states = inputs_embeds + position_embeds
+
+        # Pass through encoder layers
+        for encoder_layer in self.clip_model.text_model.encoder.layers:
+            hidden_states = encoder_layer(hidden_states)
+
+        # Apply final layer norm
+        hidden_states = self.clip_model.text_model.final_layer_norm(hidden_states)
+
+        # Get EOS token representation (last token)
+        # CLIP uses the end-of-sequence token for pooling
+        eos_token_idx = hidden_states.shape[1] - 1
+        text_feature = hidden_states[:, eos_token_idx, :]
+
+        return text_feature
 
     def build_simple_text_features(self, class_names: List[str]) -> torch.Tensor:
         """
@@ -350,12 +384,19 @@ class CLIPLoRACoOp(nn.Module):
             position_ids = torch.arange(combined_embeds.shape[1], device=self.device).unsqueeze(0)
 
             with torch.no_grad():
-                text_outputs = self.clip_model.text_model(
-                    inputs_embeds=combined_embeds,
-                    position_ids=position_ids,
-                    return_dict=True
-                )
-                text_feature = F.normalize(text_outputs.pooler_output, p=2, dim=-1)
+                # Try modern API first, fall back to manual if needed
+                try:
+                    text_outputs = self.clip_model.text_model(
+                        inputs_embeds=combined_embeds,
+                        position_ids=position_ids,
+                        return_dict=True
+                    )
+                    text_feature = text_outputs.pooler_output
+                except TypeError:
+                    # Fallback for older transformers
+                    text_feature = self._forward_text_encoder_legacy(combined_embeds, position_ids)
+
+                text_feature = F.normalize(text_feature, p=2, dim=-1)
 
             text_features_list.append(text_feature)
 
