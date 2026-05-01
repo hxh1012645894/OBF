@@ -110,13 +110,20 @@ class CLIPLoRACoOp(nn.Module):
         """
         Build text prototypes from prompt.json file.
 
+        JSON format expected:
+        {
+            "class_name": {
+                "prompt": "A close-up of the class_name fragment. [Contour]: ... [Pattern]: ..."
+            },
+            ...
+        }
+
         For each class:
-        1. Read class attributes (contour, pattern) from JSON
-        2. Construct hard prompt: "{Class} fragment. [Contour]: {contour} [Pattern]: {pattern}"
-        3. Tokenize and get token embeddings
-        4. Prepend learnable context tokens
-        5. Pass through frozen text encoder
-        6. Store as text prototype for this class
+        1. Read the pre-built prompt from JSON
+        2. Tokenize and get token embeddings
+        3. Prepend learnable context tokens (CoOp)
+        4. Pass through frozen text encoder
+        5. Store as text prototype for this class
 
         Args:
             json_path (str): Path to prompt.json file
@@ -124,11 +131,14 @@ class CLIPLoRACoOp(nn.Module):
         Returns:
             text_prototypes (torch.Tensor): [num_classes, embed_dim]
         """
+        # Store path for potential re-computation
+        self._prompt_json_path = json_path
+
         # Load JSON
         with open(json_path, 'r', encoding='utf-8') as f:
             prompt_data = json.load(f)
 
-        # Extract class names and attributes
+        # Extract class names and prompts
         self.class_names = list(prompt_data.keys())
 
         # Ensure num_classes matches
@@ -142,14 +152,9 @@ class CLIPLoRACoOp(nn.Module):
         text_features_list = []
 
         for class_name in self.class_names:
+            # Get the pre-built prompt from JSON
             class_info = prompt_data[class_name]
-
-            # Construct hard prompt
-            # Format: "{Class} fragment. [Contour]: {contour_text} [Pattern]: {pattern_text}"
-            contour_text = class_info.get('contour', '')
-            pattern_text = class_info.get('pattern', '')
-
-            hard_prompt = f"{class_name} fragment. [Contour]: {contour_text} [Pattern]: {pattern_text}"
+            hard_prompt = class_info.get('prompt', f"a photo of {class_name}")
 
             # Tokenize
             inputs = self.tokenizer(
@@ -171,31 +176,19 @@ class CLIPLoRACoOp(nn.Module):
             # token_embeds shape: [1, seq_len, embed_dim]
             # context_tokens shape: [num_context_tokens, embed_dim]
 
-            seq_len = token_embeds.shape[1]
-            max_seq_len = 77 - self.num_context_tokens  # Reserve space for context tokens
-
-            if seq_len > max_seq_len:
-                # Truncate if too long
-                token_embeds = token_embeds[:, :max_seq_len, :]
-
-            # Concatenate: [context_tokens] + [token_embeds]
-            # Note: We need to handle the special tokens (SOS, EOS) carefully
-            # CLIP uses [SOT] (start of text) at position 0 and [EOT] (end of text) at the end
-
             # Get context tokens as [1, num_context_tokens, embed_dim]
             ctx_tokens = self.context_tokens.unsqueeze(0)  # [1, num_ctx, embed_dim]
 
-            # For CoOp: Replace the first num_context_tokens positions after SOS
-            # Standard approach: [SOS, ctx_1, ctx_2, ..., ctx_M, word_tokens, EOS]
-
+            # For CoOp: [SOS, ctx_1, ctx_2, ..., ctx_M, word_tokens, EOS]
             # Get SOS token embedding (position 0)
             sos_embed = token_embeds[:, 0:1, :]  # [1, 1, embed_dim]
 
             # Get remaining word tokens (excluding SOS)
             word_embeds = token_embeds[:, 1:, :]  # [1, seq_len-1, embed_dim]
 
-            # Construct new sequence: [SOS, ctx_tokens, word_embeds truncated, EOS]
-            available_space = 77 - 1 - self.num_context_tokens - 1  # 77 - SOS - ctx - EOS
+            # Calculate available space for word tokens
+            # Total: 77 = SOS(1) + Context(M) + Words(L) + EOS(1)
+            available_space = 77 - 1 - self.num_context_tokens - 1
             word_embeds_truncated = word_embeds[:, :available_space, :]
 
             # Get EOS token embedding
@@ -223,8 +216,7 @@ class CLIPLoRACoOp(nn.Module):
                     return_dict=True
                 )
 
-                # Get the final representation (pooler_output or last_hidden_state[:, 0])
-                # CLIP uses the EOT token embedding at the end
+                # Get the final representation (pooler_output)
                 text_feature = text_outputs.pooler_output  # [1, embed_dim]
 
                 # Normalize
