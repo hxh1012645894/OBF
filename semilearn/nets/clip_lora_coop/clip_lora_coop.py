@@ -312,25 +312,49 @@ class CLIPLoRACoOp(nn.Module):
         Returns:
             text_feature: Pooled text feature [1, embed_dim]
         """
+        seq_len = inputs_embeds.shape[1]
+
         # Get position embeddings
         position_embeds = self.clip_model.text_model.embeddings.position_embedding(position_ids)
 
         # Combine token + position embeddings
         hidden_states = inputs_embeds + position_embeds
 
+        # Create attention masks (all ones for valid tokens)
+        attention_mask = torch.ones((1, seq_len), device=self.device, dtype=torch.long)
+        causal_attention_mask = self._create_causal_mask(seq_len, self.device)
+
         # Pass through encoder layers
         for encoder_layer in self.clip_model.text_model.encoder.layers:
-            hidden_states = encoder_layer(hidden_states)
+            hidden_states = encoder_layer(
+                hidden_states,
+                attention_mask=attention_mask,
+                causal_attention_mask=causal_attention_mask
+            )
 
         # Apply final layer norm
         hidden_states = self.clip_model.text_model.final_layer_norm(hidden_states)
 
         # Get EOS token representation (last token)
-        # CLIP uses the end-of-sequence token for pooling
-        eos_token_idx = hidden_states.shape[1] - 1
-        text_feature = hidden_states[:, eos_token_idx, :]
+        text_feature = hidden_states[:, -1, :]
 
         return text_feature
+
+    def _create_causal_mask(self, seq_len: int, device: str) -> torch.Tensor:
+        """
+        Create causal attention mask for CLIP text encoder.
+
+        Args:
+            seq_len: Sequence length
+            device: Device to create mask on
+
+        Returns:
+            causal_mask: [1, 1, seq_len, seq_len]
+        """
+        # Create lower triangular mask (causal)
+        mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1)
+        mask = mask.masked_fill(mask == 1, float('-inf'))
+        return mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
 
     def build_simple_text_features(self, class_names: List[str]) -> torch.Tensor:
         """
