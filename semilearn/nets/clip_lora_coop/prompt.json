@@ -1,47 +1,56 @@
 {
-  "Entoplastron": {
-    "prefix": "A close-up of the Entoplastron fragment.",
-    "Contour": "The fragment has a rhomboid or diamond-shaped outline formed by jagged suture lines.",
-    "Pattern": "The surface features a cross-shaped (+) intersection of grooves."
-  },
-  "Right Epiplastron": {
-    "prefix": "A close-up of the Right Epiplastron fragment.",
-    "Contour": "The top edge is a smooth original curve, while the inner edges are jagged sutures.",
-    "Pattern": "It features a curved groove line sweeping downwards to the left."
-  },
-  "Left Epiplastron": {
+  "01": {
+    "class_name": "Left Epiplastron",
     "prefix": "A close-up of the Left Epiplastron fragment.",
     "Contour": "The top edge is a smooth original curve, while the inner edges are jagged sutures.",
     "Pattern": "It features a curved groove line sweeping downwards to the right."
   },
-  "Right Hyoplastron": {
-    "prefix": "A close-up of the Right Hyoplastron fragment.",
-    "Contour": "The top inner corner has a notch to fit the central diamond bone. The bottom edge is a straight horizontal suture line.",
-    "Pattern": "Characterized by horizontal texture, often showing two parallel groove lines."
+  "02": {
+    "class_name": "Right Epiplastron",
+    "prefix": "A close-up of the Right Epiplastron fragment.",
+    "Contour": "The top edge is a smooth original curve, while the inner edges are jagged sutures.",
+    "Pattern": "It features a curved groove line sweeping downwards to the left."
   },
-  "Left Hyoplastron": {
+  "03": {
+    "class_name": "Left Hyoplastron",
     "prefix": "A close-up of the Left Hyoplastron fragment.",
     "Contour": "The top inner corner has a notch to fit the central diamond bone. The bottom edge is a straight horizontal suture line.",
     "Pattern": "Characterized by horizontal texture, often showing two parallel groove lines."
   },
-  "Right Hypoplastron": {
-    "prefix": "A close-up of the Right Hypoplastron fragment.",
-    "Contour": "The top edge is a straight horizontal suture line. The bottom edge is irregular or curved where it meets the tail bone.",
-    "Pattern": "Features a single horizontal groove line that forms a slightly backward-convex arc."
+  "04": {
+    "class_name": "Right Hyoplastron",
+    "prefix": "A close-up of the Right Hyoplastron fragment.",
+    "Contour": "The top inner corner has a notch to fit the central diamond bone. The bottom edge is a straight horizontal suture line.",
+    "Pattern": "Characterized by horizontal texture, often showing two parallel groove lines."
   },
-  "Left Hypoplastron": {
+  "05": {
+    "class_name": "Left Hypoplastron",
     "prefix": "A close-up of the Left Hypoplastron fragment.",
     "Contour": "The top edge is a straight horizontal suture line. The bottom edge is irregular or curved where it meets the tail bone.",
     "Pattern": "Features a single horizontal groove line that forms a slightly backward-convex arc."
   },
-  "Right Xiphiplastron": {
+  "06": {
+    "class_name": "Right Hypoplastron",
+    "prefix": "A close-up of the Right Hypoplastron fragment.",
+    "Contour": "The top edge is a straight horizontal suture line. The bottom edge is irregular or curved where it meets the tail bone.",
+    "Pattern": "Features a single horizontal groove line that forms a slightly backward-convex arc."
+  },
+  "07": {
+    "class_name": "Left Xiphiplastron",
+    "prefix": "A close-up of the Left Xiphiplastron fragment.",
+    "Contour": "The top edge is jagged, and the bottom tip is usually concave or pointed.",
+    "Pattern": "Features a groove line sloping steeply downwards to the left."
+  },
+  "08": {
+    "class_name": "Right Xiphiplastron",
     "prefix": "A close-up of the Right Xiphiplastron fragment.",
     "Contour": "The top edge is jagged, and the bottom tip is usually concave or pointed.",
     "Pattern": "Features a groove line sloping steeply downwards to the right."
   },
-  "Left Xiphiplastron": {
-    "prefix": "A close-up of the Left Xiphiplastron fragment.",
-    "Contour": "The top edge is jagged, and the bottom tip is usually concave or pointed.",
-    "Pattern": "Features a groove line sloping steeply downwards to the left."
+  "09": {
+    "class_name": "Entoplastron",
+    "prefix": "A close-up of the Entoplastron fragment.",
+    "Contour": "The fragment has a rhomboid or diamond-shaped outline formed by jagged suture lines.",
+    "Pattern": "The surface features a cross-shaped (+) intersection of grooves."
   }
 }
