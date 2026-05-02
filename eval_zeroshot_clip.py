@@ -1,9 +1,11 @@
 # Zero-shot CLIP Evaluation using project's built-in CLIP
 # Supports both custom prompt.json and official CLIP templates
+# Supports YAML config file
 
 import os
 import json
 import argparse
+import yaml
 import numpy as np
 import torch
 from PIL import Image
@@ -164,7 +166,12 @@ def encode_text_with_templates(model, class_names, templates, device):
 def main():
     parser = argparse.ArgumentParser(description='Zero-shot CLIP Evaluation')
 
-    # Model settings
+    # Config file (same as original USB system: -c/--c)
+    parser.add_argument('-c', '--c', type=str, default=None,
+                        dest='config',
+                        help='Path to YAML config file')
+
+    # Model settings (can be overridden by config)
     parser.add_argument('--model_name', type=str, default='ViT-B/32',
                         choices=['RN50', 'RN101', 'RN50x4', 'ViT-B/32', 'ViT-B/16'],
                         help='CLIP model name')
@@ -174,9 +181,9 @@ def main():
                         help='Path to prompt.json (expert prompts)')
     parser.add_argument('--prompt_mode', type=str, default='expert',
                         choices=['expert', 'clip_full', 'clip_simple', 'clip_single'],
-                        help='Prompt mode: expert (from JSON), clip_full (80 templates), clip_simple (3), clip_single (1)')
+                        help='Prompt mode')
     parser.add_argument('--class_names', type=str, default=None,
-                        help='Comma-separated class names (for clip modes without JSON)')
+                        help='Comma-separated class names')
 
     # Data settings
     parser.add_argument('--data_dir', type=str, default='./data/imagenet/val',
@@ -187,6 +194,27 @@ def main():
     parser.add_argument('--results_dir', type=str, default='./results')
 
     args = parser.parse_args()
+
+    # Load YAML config if provided
+    if args.config is not None and os.path.exists(args.config):
+        with open(args.config, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+
+        # Override args with config values
+        if 'model_name' in config:
+            args.model_name = config['model_name']
+        if 'prompt_mode' in config:
+            args.prompt_mode = config['prompt_mode']
+        if 'prompt_json' in config:
+            args.prompt_json = config['prompt_json']
+        if 'data_dir' in config:
+            args.data_dir = config['data_dir']
+        if 'batch_size' in config:
+            args.batch_size = config['batch_size']
+        if 'results_dir' in config:
+            args.results_dir = config['results_dir']
+
+        print(f"Loaded config from: {args.config}")
 
     print("=" * 60)
     print("Zero-shot CLIP Evaluation")
