@@ -9,8 +9,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
 
-from timm.models.layers import DropPath, trunc_normal_
-from timm.models.layers.helpers import to_2tuple
+from timm.layers import DropPath, trunc_normal_
+try:
+    from timm.layers.helpers import to_2tuple
+except ImportError:
+    from timm.models.layers.helpers import to_2tuple
 
 from semilearn.nets.utils import load_checkpoint
 

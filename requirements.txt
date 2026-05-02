@@ -1,18 +1,53 @@
-matplotlib>=3.5.2
+# USB (Unified Semi-supervised learning Benchmark) Requirements
+# Recommended Python version: 3.10 or 3.11 (NOT 3.12 due to aimrocks compatibility)
+
+# ============ Core Deep Learning ============
+torch>=1.12.0
+torchvision>=0.13.0
+torchaudio>=0.12.0
+
+# ============ Model Architectures ============
+# ViT and other vision models (use >=0.9.0 for new import path)
+timm>=0.9.0
+
+# HuggingFace transformers for BERT, CLIP (HuggingFace version)
+transformers>=4.30.0
+
+# LoRA fine-tuning
+peft>=0.4.0
+
+# ============ CLIP Dependencies ============
+# CLIP tokenizer requirements
+ftfy>=6.1.0
+regex>=2022.1.18
+
+# ============ Data Processing ============
 numpy>=1.24.4
+scipy>=1.10.0
 Pillow>=9.0.0
+scikit-learn>=1.0.2
+scikit-image>=0.19.3
+
+# ============ Training Utilities ============
+tqdm>=4.64.0
+tensorboard>=2.9.1
 progress>=1.6
+
+# ============ Configuration ============
+pyyaml>=6.0
 ruamel.yaml>=0.17.21
 ruamel.yaml.clib>=0.2.6
-scikit-image>=0.19.3
-scikit-learn>=1.0.2
-scipy>=1.10.0
-tensorboard>=2.9.1
-timm>=0.5.4
-torch>=1.12.0
-torchaudio>=0.12.0
-torchvision>=0.13.0
-tqdm>=4.64.0
-transformers>=4.30.0
-wandb
-aim
+
+# ============ Visualization ============
+matplotlib>=3.5.2
+
+# ============ Experiment Tracking ============
+wandb>=0.12.0
+
+# Optional: aim (requires aimrocks which may fail on Python 3.12)
+# If you need aim, install manually: pip install aim
+# aim>=3.0.0
+
+# ============ Semi-supervised Learning Specific ============
+# For medmnist dataset montage visualization
+# (included in scikit-image above)

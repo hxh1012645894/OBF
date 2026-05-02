@@ -1,6 +1,7 @@
-# Zero-shot CLIP Evaluation using project's built-in CLIP
+# Zero-shot CLIP Evaluation (Standalone)
 # Supports both custom prompt.json and official CLIP templates
 # Supports YAML config file
+# No dependency on semilearn package chain imports
 
 import os
 import json
@@ -10,8 +11,14 @@ import numpy as np
 import torch
 from PIL import Image
 
-# Use project's internal CLIP implementation
-from semilearn.nets import clip
+# Direct imports from clip module (avoid semilearn chain imports)
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+_clip_module_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'semilearn', 'nets', 'clip')
+sys.path.insert(0, _clip_module_path)
+
+from clip import load as clip_load, tokenize as clip_tokenize
 
 
 # CLIP official prompt templates (from OpenAI paper)
@@ -148,7 +155,7 @@ def encode_text_with_templates(model, class_names, templates, device):
         for template in templates:
             # Build prompts for this template
             prompts = [template.format(name) for name in class_names]
-            text_tokens = clip.tokenize(prompts, truncate=True).to(device)
+            text_tokens = clip_tokenize(prompts, truncate=True).to(device)
 
             # Encode
             features = model.encode_text(text_tokens)
@@ -227,7 +234,7 @@ def main():
     # ========== 1. Load Model ==========
     print("\n[1] Loading model...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, preprocess = clip.load(args.model_name, device=device)
+    model, preprocess = clip_load(args.model_name, device=device)
     print(f"Model loaded on {device}")
 
     # ========== 2. Build Text Features ==========
@@ -250,7 +257,7 @@ def main():
         print(f"\nExample prompt: {prompts[0][:100]}...")
 
         # Tokenize and encode
-        text_tokens = clip.tokenize(prompts, truncate=True).to(device)
+        text_tokens = clip_tokenize(prompts, truncate=True).to(device)
         with torch.no_grad():
             text_features = model.encode_text(text_tokens)
             text_features /= text_features.norm(dim=-1, keepdim=True)
