@@ -9,8 +9,14 @@ from PIL import Image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from tqdm import tqdm
 
-from .model import build_model
-from .simple_tokenizer import SimpleTokenizer as _Tokenizer
+# Use absolute imports for standalone usage
+try:
+    from .model import build_model
+    from .simple_tokenizer import SimpleTokenizer as _Tokenizer
+except ImportError:
+    # When running standalone (direct import from clip directory)
+    from model import build_model
+    from simple_tokenizer import SimpleTokenizer as _Tokenizer
 
 try:
     from torchvision.transforms import InterpolationMode
