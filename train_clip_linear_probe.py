@@ -151,8 +151,16 @@ def main():
 
     # Load YAML config if provided
     if args.config is not None and os.path.exists(args.config):
-        with open(args.config, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
+        # Try multiple encodings to handle cross-platform issues
+        for encoding in ['utf-8', 'utf-8-sig', 'latin-1', 'gbk']:
+            try:
+                with open(args.config, 'r', encoding=encoding) as f:
+                    config = yaml.safe_load(f)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise ValueError(f"Cannot decode config file: {args.config}")
 
         # Override args with config values
         for key, value in config.items():
