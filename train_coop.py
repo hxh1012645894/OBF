@@ -263,7 +263,7 @@ class CoOpModel(nn.Module):
         """
         Encode text with learnable context tokens prepended.
 
-        Format: [SOS] [ctx_1] ... [ctx_M] [class_tokens] [EOS]
+        Format: [SOS] [ctx_1] ... [ctx_M] [class_tokens] [PAD...] [EOS]
 
         Returns:
             text_features: [num_classes, embed_dim]
@@ -275,42 +275,59 @@ class CoOpModel(nn.Module):
         with torch.no_grad():
             sos_embed = self.clip_model.token_embedding(sos_token)[0, 0:1, :]  # [1, embed_dim]
 
+        # Get EOS token embedding (token id 49407 for CLIP)
+        eos_token_id = 49407
+        eos_token = torch.tensor([[eos_token_id]], device=self.device)
+        with torch.no_grad():
+            eos_embed = self.clip_model.token_embedding(eos_token)[0, 0:1, :]  # [1, embed_dim]
+
         for class_embeds in self.class_token_embeds_list:
-            # Concatenate: SOS + context + class_tokens
+            # Concatenate: SOS + context + class_tokens + EOS
             # context_tokens: [num_ctx, embed_dim]
             # class_embeds: [class_seq_len, embed_dim]
 
-            # Truncate class tokens if too long (77 = SOS + ctx + class + EOS)
+            # Calculate max class tokens allowed
+            # 77 = SOS(1) + context(N) + class_tokens(L) + EOS(1)
             max_class_len = 77 - 1 - self.num_context_tokens - 1
             class_embeds_truncated = class_embeds[:max_class_len]
 
-            # Build combined sequence
-            combined = torch.cat([
+            # Build combined sequence without padding first
+            combined_core = torch.cat([
                 sos_embed,                     # [1, embed_dim]
                 self.context_tokens,           # [num_ctx, embed_dim]
-                class_embeds_truncated         # [class_len, embed_dim]
-            ], dim=0)  # [seq_len, embed_dim]
+                class_embeds_truncated,        # [class_len, embed_dim]
+                eos_embed                      # [1, embed_dim]
+            ], dim=0)  # [seq_len, embed_dim], seq_len <= 77
 
-            # Add positional embeddings
-            seq_len = combined.shape[0]
+            # Pad to exactly 77 tokens if needed
+            current_len = combined_core.shape[0]
+            if current_len < 77:
+                # Pad with zeros (or could use learned padding)
+                padding = torch.zeros(77 - current_len, self.embed_dim, device=self.device, dtype=combined_core.dtype)
+                combined = torch.cat([combined_core, padding], dim=0)  # [77, embed_dim]
+            else:
+                combined = combined_core  # [77, embed_dim]
+
+            # Add positional embeddings (fixed 77 length)
             with torch.no_grad():
-                pos_embed = self.clip_model.positional_embedding[:seq_len]
-                combined = combined + pos_embed
+                combined = combined + self.clip_model.positional_embedding
 
             # Get dtype from CLIP model
             dtype = self.clip_model.dtype
 
             # Pass through transformer
             # CLIP transformer expects LND format (seq_len, batch, dim)
-            x = combined.type(dtype).unsqueeze(1)  # [seq_len, 1, embed_dim] (LND)
-            x = self.clip_model.transformer(x)  # Pass through transformer
-            x = x.squeeze(1)  # [seq_len, embed_dim] (back to NLD format with batch=1)
+            x = combined.type(dtype).unsqueeze(1)  # [77, 1, embed_dim] (LND)
+            x = self.clip_model.transformer(x)  # Pass through transformer (attention mask is 77x77)
+            x = x.squeeze(1)  # [77, embed_dim] (back to NLD format with batch=1)
 
             # Apply ln_final
-            x = self.clip_model.ln_final(x).type(dtype)  # [seq_len, embed_dim]
+            x = self.clip_model.ln_final(x).type(dtype)  # [77, embed_dim]
 
-            # Take last token (EOS) representation and apply text_projection
-            text_feat = x[-1, :] @ self.clip_model.text_projection
+            # Find EOS position and take its representation
+            # EOS is at position: 1 + num_context_tokens + class_len
+            eos_pos = 1 + self.num_context_tokens + class_embeds_truncated.shape[0]
+            text_feat = x[eos_pos, :] @ self.clip_model.text_projection
 
             text_feat = F.normalize(text_feat, dim=-1)
             text_features_list.append(text_feat)
