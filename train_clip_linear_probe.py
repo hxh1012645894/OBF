@@ -59,9 +59,11 @@ def setup_logging(save_dir: str, save_name: str):
     Returns:
         logger: Logger instance
     """
-    os.makedirs(save_dir, exist_ok=True)
+    # Put log file inside save_name folder
+    log_dir = os.path.join(save_dir, save_name)
+    os.makedirs(log_dir, exist_ok=True)
 
-    log_file = os.path.join(save_dir, f'{save_name}_log.txt')
+    log_file = os.path.join(log_dir, 'log.txt')
 
     # Create logger
     logger = logging.getLogger('train')
@@ -485,10 +487,11 @@ def main():
             class_acc = class_correct[i] / class_total[i]
             print(f"  Class {i+1:02d}: {class_acc:.4f} ({class_correct[i]}/{class_total[i]})")
 
-    # Save results
-    os.makedirs(args.results_dir, exist_ok=True)
+    # Save results to save_name folder
+    results_save_dir = os.path.join(args.results_dir, args.save_name)
+    os.makedirs(results_save_dir, exist_ok=True)
     np.savez(
-        os.path.join(args.results_dir, f'{args.save_name}_results.npz'),
+        os.path.join(results_save_dir, 'results.npz'),
         best_acc=best_acc,
         best_epoch=best_epoch,
         predictions=np.array(all_preds),
@@ -497,7 +500,7 @@ def main():
         class_total=np.array(class_total),
         num_labels_per_class=args.num_labels_per_class
     )
-    print(f"\nResults saved to {args.results_dir}/{args.save_name}_results.npz")
+    print(f"\nResults saved to {results_save_dir}/results.npz")
 
 
 if __name__ == "__main__":
