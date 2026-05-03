@@ -7,11 +7,13 @@ import json
 import argparse
 import yaml
 import random
+import logging
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
 from tqdm import tqdm
 
@@ -42,6 +44,44 @@ def set_random_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
     print(f"[Seed] Random seed set to {seed} for reproducibility")
+
+
+def setup_logging(save_dir: str, save_name: str):
+    """
+    Setup logging to file and console.
+
+    Args:
+        save_dir: Directory to save logs
+        save_name: Name for log file
+
+    Returns:
+        logger: Logger instance
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    log_file = os.path.join(save_dir, f'{save_name}_log.txt')
+
+    # Create logger
+    logger = logging.getLogger('coop_train')
+    logger.setLevel(logging.INFO)
+
+    # File handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # Format
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
 
 
 class CoOpModel(nn.Module):
@@ -371,6 +411,10 @@ def main():
     parser.add_argument('--save_name', type=str, default='coop_obf')
     parser.add_argument('--results_dir', type=str, default='./results')
 
+    # Logging settings
+    parser.add_argument('--use_tensorboard', type=bool, default=True)
+    parser.add_argument('--use_wandb', type=bool, default=False)
+
     args = parser.parse_args()
 
     # Load config
@@ -468,8 +512,24 @@ def main():
 
     print(f"Optimizer: {args.optimizer}")
 
+    # Setup logging and TensorBoard
+    os.makedirs(os.path.join(args.save_dir, args.save_name), exist_ok=True)
+    logger = setup_logging(args.save_dir, args.save_name)
+
+    if args.use_tensorboard:
+        tb_dir = os.path.join(args.save_dir, args.save_name, 'tensorboard')
+        os.makedirs(tb_dir, exist_ok=True)
+        writer = SummaryWriter(tb_dir)
+        print(f"[TensorBoard] Logging to {tb_dir}")
+    else:
+        writer = None
+
     # ========== 5. Training Loop ==========
     print("\n[5] Training...")
+    logger.info("=" * 60)
+    logger.info("CoOp Training started")
+    logger.info("=" * 60)
+
     best_acc = 0.0
     best_epoch = 0
 
@@ -500,6 +560,7 @@ def main():
 
             pbar.set_postfix({'loss': f'{loss.item():.4f}', 'acc': f'{train_correct/train_total:.4f}'})
 
+        train_loss /= train_total
         train_acc = train_correct / train_total
 
         # Validation
@@ -518,17 +579,58 @@ def main():
                 val_total += images.size(0)
 
         val_acc = val_correct / val_total
-        print(f"Epoch {epoch}: Train Acc={train_acc:.4f}, Val Acc={val_acc:.4f}")
 
+        # Logging
+        log_msg = f"Epoch {epoch}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.4f}, Val Acc={val_acc:.4f}"
+        print(log_msg)
+        logger.info(log_msg)
+
+        # TensorBoard
+        if writer is not None:
+            writer.add_scalar('Loss/train', train_loss, epoch)
+            writer.add_scalar('Accuracy/train', train_acc, epoch)
+            writer.add_scalar('Accuracy/val', val_acc, epoch)
+
+        # Save best model
         if val_acc > best_acc:
             best_acc = val_acc
             best_epoch = epoch
 
-            os.makedirs(args.save_dir, exist_ok=True)
-            save_path = os.path.join(args.save_dir, f'{args.save_name}_best.pt')
+            save_path = os.path.join(args.save_dir, args.save_name, 'model_best.pt')
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             torch.save({
                 'epoch': epoch,
                 'context_tokens': coop_model.context_tokens.data,
+                'optimizer': optimizer.state_dict(),
+                'num_context_tokens': args.num_context_tokens,
+                'model_name': args.model_name,
+                'num_classes': args.num_classes,
+                'val_acc': val_acc,
+                'train_acc': train_acc,
+                'train_loss': train_loss,
+                'num_labels_per_class': args.num_labels_per_class,
+                'prompt_json': args.prompt_json,
+                'seed': args.seed,
+            }, save_path)
+            logger.info(f"  -> Saved best model (Val Acc: {val_acc:.4f})")
+
+        # Save latest model
+        latest_path = os.path.join(args.save_dir, args.save_name, 'latest_model.pth')
+        os.makedirs(os.path.dirname(latest_path), exist_ok=True)
+        torch.save({
+            'epoch': epoch,
+            'context_tokens': coop_model.context_tokens.data,
+            'optimizer': optimizer.state_dict(),
+            'num_context_tokens': args.num_context_tokens,
+            'model_name': args.model_name,
+            'num_classes': args.num_classes,
+            'val_acc': val_acc,
+            'train_acc': train_acc,
+            'train_loss': train_loss,
+            'num_labels_per_class': args.num_labels_per_class,
+            'prompt_json': args.prompt_json,
+            'seed': args.seed,
+        }, latest_path)
                 'num_context_tokens': args.num_context_tokens,
                 'model_name': args.model_name,
                 'num_classes': args.num_classes,
@@ -542,8 +644,19 @@ def main():
     print("=" * 60)
     print(f"Best Val Accuracy: {best_acc:.4f} ({best_acc*100:.2f}%)")
     print(f"Best Epoch: {best_epoch}")
-    print(f"Model saved: {args.save_dir}/{args.save_name}_best.pt")
+    print(f"Best model: {args.save_dir}/{args.save_name}/model_best.pt")
+    print(f"Latest model: {args.save_dir}/{args.save_name}/latest_model.pth")
     print("=" * 60)
+
+    logger.info("=" * 60)
+    logger.info("TRAINING COMPLETED")
+    logger.info(f"Best Val Accuracy: {best_acc:.4f} ({best_acc*100:.2f}%)")
+    logger.info(f"Best Epoch: {best_epoch}")
+    logger.info("=" * 60)
+
+    # Close TensorBoard writer
+    if writer is not None:
+        writer.close()
 
     # ========== 7. Per-class Accuracy ==========
     print("\n[6] Final evaluation...")

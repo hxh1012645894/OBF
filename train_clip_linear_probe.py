@@ -6,13 +6,16 @@ import os
 import argparse
 import yaml
 import random
+import logging
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
 from tqdm import tqdm
+from datetime import datetime
 
 # Direct imports from clip module (avoid semilearn chain imports)
 import sys
@@ -43,6 +46,44 @@ def set_random_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
     print(f"[Seed] Random seed set to {seed} for reproducibility")
+
+
+def setup_logging(save_dir: str, save_name: str):
+    """
+    Setup logging to file and console.
+
+    Args:
+        save_dir: Directory to save logs
+        save_name: Name for log file
+
+    Returns:
+        logger: Logger instance
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    log_file = os.path.join(save_dir, f'{save_name}_log.txt')
+
+    # Create logger
+    logger = logging.getLogger('train')
+    logger.setLevel(logging.INFO)
+
+    # File handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # Format
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
 
 
 class SimpleImageDataset(torch.utils.data.Dataset):
@@ -147,6 +188,10 @@ def main():
     parser.add_argument('--save_name', type=str, default='clip_linear_probe')
     parser.add_argument('--results_dir', type=str, default='./results')
 
+    # Logging settings (USB format)
+    parser.add_argument('--use_tensorboard', type=bool, default=True)
+    parser.add_argument('--use_wandb', type=bool, default=False)
+
     args = parser.parse_args()
 
     # Load YAML config if provided
@@ -239,6 +284,19 @@ def main():
     # ========== 4. Setup Training ==========
     print("\n[4] Setting up training...")
 
+    # Setup logging
+    os.makedirs(args.save_dir, exist_ok=True)
+    logger = setup_logging(args.save_dir, args.save_name)
+
+    # Setup TensorBoard
+    if args.use_tensorboard:
+        tb_dir = os.path.join(args.save_dir, args.save_name, 'tensorboard')
+        os.makedirs(tb_dir, exist_ok=True)
+        writer = SummaryWriter(tb_dir)
+        print(f"[TensorBoard] Logging to {tb_dir}")
+    else:
+        writer = None
+
     criterion = nn.CrossEntropyLoss()
 
     if args.optimizer == 'AdamW':
@@ -248,11 +306,15 @@ def main():
     else:
         optimizer = torch.optim.SGD(classifier.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
 
-    print(f"Optimizer: {args.optimizer}")
-    print(f"Loss: CrossEntropyLoss")
+    logger.info(f"Optimizer: {args.optimizer}")
+    logger.info(f"Loss: CrossEntropyLoss")
 
     # ========== 5. Training Loop ==========
     print("\n[5] Training...")
+    logger.info("=" * 60)
+    logger.info("Training started")
+    logger.info("=" * 60)
+
     best_acc = 0.0
     best_epoch = 0
 
@@ -313,23 +375,55 @@ def main():
 
         val_acc = val_correct / val_total
 
-        print(f"Epoch {epoch}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.4f}, Val Acc={val_acc:.4f}")
+        # Logging
+        log_msg = f"Epoch {epoch}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.4f}, Val Acc={val_acc:.4f}"
+        print(log_msg)
+        logger.info(log_msg)
+
+        # TensorBoard logging
+        if writer is not None:
+            writer.add_scalar('Loss/train', train_loss, epoch)
+            writer.add_scalar('Accuracy/train', train_acc, epoch)
+            writer.add_scalar('Accuracy/val', val_acc, epoch)
 
         # Save best model
         if val_acc > best_acc:
             best_acc = val_acc
             best_epoch = epoch
 
-            os.makedirs(args.save_dir, exist_ok=True)
-            save_path = os.path.join(args.save_dir, f'{args.save_name}_best.pt')
+            save_path = os.path.join(args.save_dir, args.save_name, 'model_best.pt')
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             torch.save({
                 'epoch': epoch,
                 'classifier': classifier.state_dict(),
+                'optimizer': optimizer.state_dict(),
                 'clip_model_name': args.model_name,
                 'feature_dim': feature_dim,
                 'num_classes': args.num_classes,
                 'val_acc': val_acc,
+                'train_acc': train_acc,
+                'train_loss': train_loss,
+                'num_labels_per_class': args.num_labels_per_class,
+                'seed': args.seed,
             }, save_path)
+            logger.info(f"  -> Saved best model (Val Acc: {val_acc:.4f})")
+
+        # Save latest model (every epoch)
+        latest_path = os.path.join(args.save_dir, args.save_name, 'latest_model.pth')
+        os.makedirs(os.path.dirname(latest_path), exist_ok=True)
+        torch.save({
+            'epoch': epoch,
+            'classifier': classifier.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'clip_model_name': args.model_name,
+            'feature_dim': feature_dim,
+            'num_classes': args.num_classes,
+            'val_acc': val_acc,
+            'train_acc': train_acc,
+            'train_loss': train_loss,
+            'num_labels_per_class': args.num_labels_per_class,
+            'seed': args.seed,
+        }, latest_path)
             print(f"  -> Saved best model (Val Acc: {val_acc:.4f})")
 
     # ========== 6. Final Results ==========
@@ -338,14 +432,26 @@ def main():
     print("=" * 60)
     print(f"Best Val Accuracy: {best_acc:.4f} ({best_acc*100:.2f}%)")
     print(f"Best Epoch: {best_epoch}")
-    print(f"Model saved: {args.save_dir}/{args.save_name}_best.pt")
+    print(f"Best model: {args.save_dir}/{args.save_name}/model_best.pt")
+    print(f"Latest model: {args.save_dir}/{args.save_name}/latest_model.pth")
     print("=" * 60)
+
+    logger.info("=" * 60)
+    logger.info("TRAINING COMPLETED")
+    logger.info(f"Best Val Accuracy: {best_acc:.4f} ({best_acc*100:.2f}%)")
+    logger.info(f"Best Epoch: {best_epoch}")
+    logger.info("=" * 60)
+
+    # Close TensorBoard writer
+    if writer is not None:
+        writer.close()
 
     # ========== 7. Final Evaluation ==========
     print("\n[6] Loading best model for final evaluation...")
 
     # Load best checkpoint
-    checkpoint = torch.load(os.path.join(args.save_dir, f'{args.save_name}_best.pt'), weights_only=False)
+    best_path = os.path.join(args.save_dir, args.save_name, 'model_best.pt')
+    checkpoint = torch.load(best_path, weights_only=False)
     classifier.load_state_dict(checkpoint['classifier'])
 
     classifier.eval()
