@@ -270,62 +270,58 @@ class CoOpModel(nn.Module):
         """
         text_features_list = []
 
-        # Get SOS embedding
+        # Get frozen embeddings (no_grad for these)
         sos_token = clip_tokenize([""], truncate=True).to(self.device)
         with torch.no_grad():
-            sos_embed = self.clip_model.token_embedding(sos_token)[0, 0:1, :]  # [1, embed_dim]
+            sos_embed = self.clip_model.token_embedding(sos_token)[0, 0:1, :].clone()  # [1, embed_dim]
 
-        # Get EOS token embedding (token id 49407 for CLIP)
         eos_token_id = 49407
         eos_token = torch.tensor([[eos_token_id]], device=self.device)
         with torch.no_grad():
-            eos_embed = self.clip_model.token_embedding(eos_token)[0, 0:1, :]  # [1, embed_dim]
+            eos_embed = self.clip_model.token_embedding(eos_token)[0, 0:1, :].clone()  # [1, embed_dim]
+
+        # Get positional embedding (frozen, but don't use no_grad wrapper)
+        pos_embed = self.clip_model.positional_embedding.data  # [77, embed_dim] - frozen but accessible
 
         for class_embeds in self.class_token_embeds_list:
-            # Concatenate: SOS + context + class_tokens + EOS
-            # context_tokens: [num_ctx, embed_dim]
-            # class_embeds: [class_seq_len, embed_dim]
+            # class_embeds is already frozen (pre-computed)
 
-            # Calculate max class tokens allowed
-            # 77 = SOS(1) + context(N) + class_tokens(L) + EOS(1)
+            # Truncate class tokens if too long
             max_class_len = 77 - 1 - self.num_context_tokens - 1
             class_embeds_truncated = class_embeds[:max_class_len]
 
-            # Build combined sequence without padding first
+            # Build combined sequence - context_tokens has gradient!
+            # DON'T use torch.no_grad() here - context_tokens needs gradient flow
             combined_core = torch.cat([
-                sos_embed,                     # [1, embed_dim]
-                self.context_tokens,           # [num_ctx, embed_dim]
-                class_embeds_truncated,        # [class_len, embed_dim]
-                eos_embed                      # [1, embed_dim]
-            ], dim=0)  # [seq_len, embed_dim], seq_len <= 77
+                sos_embed,                     # [1, embed_dim] - frozen
+                self.context_tokens,           # [num_ctx, embed_dim] - TRAINABLE!
+                class_embeds_truncated,        # [class_len, embed_dim] - frozen
+                eos_embed                      # [1, embed_dim] - frozen
+            ], dim=0)  # [seq_len, embed_dim]
 
-            # Pad to exactly 77 tokens if needed
+            # Pad to 77 tokens
             current_len = combined_core.shape[0]
             if current_len < 77:
-                # Pad with zeros (or could use learned padding)
                 padding = torch.zeros(77 - current_len, self.embed_dim, device=self.device, dtype=combined_core.dtype)
-                combined = torch.cat([combined_core, padding], dim=0)  # [77, embed_dim]
+                combined = torch.cat([combined_core, padding], dim=0)
             else:
-                combined = combined_core  # [77, embed_dim]
+                combined = combined_core
 
-            # Add positional embeddings (fixed 77 length)
-            with torch.no_grad():
-                combined = combined + self.clip_model.positional_embedding
+            # Add positional embeddings - DON'T use no_grad, preserves gradient from context_tokens
+            combined = combined + pos_embed[:combined.shape[0]]
 
-            # Get dtype from CLIP model
+            # Get dtype
             dtype = self.clip_model.dtype
 
-            # Pass through transformer
-            # CLIP transformer expects LND format (seq_len, batch, dim)
-            x = combined.type(dtype).unsqueeze(1)  # [77, 1, embed_dim] (LND)
-            x = self.clip_model.transformer(x)  # Pass through transformer (attention mask is 77x77)
-            x = x.squeeze(1)  # [77, embed_dim] (back to NLD format with batch=1)
+            # Pass through transformer - gradient flows through context_tokens
+            x = combined.type(dtype).unsqueeze(1)  # [77, 1, embed_dim]
+            x = self.clip_model.transformer(x)
+            x = x.squeeze(1)
 
             # Apply ln_final
-            x = self.clip_model.ln_final(x).type(dtype)  # [77, embed_dim]
+            x = self.clip_model.ln_final(x).type(dtype)
 
-            # Find EOS position and take its representation
-            # EOS is at position: 1 + num_context_tokens + class_len
+            # Take EOS position representation
             eos_pos = 1 + self.num_context_tokens + class_embeds_truncated.shape[0]
             text_feat = x[eos_pos, :] @ self.clip_model.text_projection
 
@@ -333,7 +329,7 @@ class CoOpModel(nn.Module):
             text_features_list.append(text_feat)
 
         # Stack all class features
-        text_features = torch.stack(text_features_list, dim=0)  # [num_classes, embed_dim]
+        text_features = torch.stack(text_features_list, dim=0)
 
         return text_features
 
