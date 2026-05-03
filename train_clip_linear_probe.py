@@ -345,7 +345,7 @@ def main():
     print("\n[6] Loading best model for final evaluation...")
 
     # Load best checkpoint
-    checkpoint = torch.load(os.path.join(args.save_dir, f'{args.save_name}_best.pt'))
+    checkpoint = torch.load(os.path.join(args.save_dir, f'{args.save_name}_best.pt'), weights_only=False)
     classifier.load_state_dict(checkpoint['classifier'])
 
     classifier.eval()
