@@ -5,6 +5,7 @@
 import os
 import argparse
 import yaml
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -22,6 +23,26 @@ _clip_module_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'se
 sys.path.insert(0, _clip_module_path)
 
 from clip import load as clip_load, tokenize as clip_tokenize
+
+
+def set_random_seed(seed: int):
+    """
+    Set random seed for reproducibility across all libraries.
+
+    Args:
+        seed: Random seed value
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # For multi-GPU
+
+    # Make CUDA operations deterministic (may slow down training)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"[Seed] Random seed set to {seed} for reproducibility")
 
 
 class SimpleImageDataset(torch.utils.data.Dataset):
@@ -139,6 +160,9 @@ def main():
                 setattr(args, key, value)
 
         print(f"Loaded config from: {args.config}")
+
+    # ========== Set Random Seed for Reproducibility ==========
+    set_random_seed(args.seed)
 
     # Calculate num_labels if using per_class
     if args.num_labels is None:

@@ -6,6 +6,7 @@ import os
 import json
 import argparse
 import yaml
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -22,6 +23,25 @@ _clip_module_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'se
 sys.path.insert(0, _clip_module_path)
 
 from clip import load as clip_load, tokenize as clip_tokenize
+
+
+def set_random_seed(seed: int):
+    """
+    Set random seed for reproducibility across all libraries.
+
+    Args:
+        seed: Random seed value
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"[Seed] Random seed set to {seed} for reproducibility")
 
 
 class CoOpModel(nn.Module):
@@ -69,6 +89,9 @@ class CoOpModel(nn.Module):
             torch.randn(num_context_tokens, self.embed_dim) * 0.02
         )
 
+        # Alternative: Initialize from word embeddings (optional)
+        # self._init_context_from_words("a photo of a")  # Uncomment to use
+
         # ========== Build Class Prompts ==========
         self.class_names = class_names
         self.prompt_data = None
@@ -90,6 +113,36 @@ class CoOpModel(nn.Module):
         print(f"[CoOp] Initialized with {num_context_tokens} context tokens")
         print(f"[CoOp] Embedding dimension: {self.embed_dim}")
         print(f"[CoOp] Trainable parameters: {num_context_tokens * self.embed_dim}")
+
+    def _init_context_from_words(self, init_words: str = "a photo of a"):
+        """
+        Initialize context tokens from real word embeddings.
+        This can help accelerate convergence compared to random initialization.
+
+        Args:
+            init_words: Words to use for initialization (e.g., "a photo of a")
+        """
+        tokens = clip_tokenize([init_words], truncate=True).to(self.device)
+
+        with torch.no_grad():
+            word_embeds = self.clip_model.token_embedding(tokens[0])
+
+            # Skip SOS (position 0), take next N tokens
+            # word_embeds[1] = "a", word_embeds[2] = "photo", etc.
+            num_words = min(self.num_context_tokens, len(init_words.split()) + 1)
+
+            # Initialize context tokens from word embeddings
+            init_embeds = word_embeds[1:num_words+1, :].clone()
+
+            # If we need more tokens than words, pad with random
+            if num_words < self.num_context_tokens:
+                padding = torch.randn(self.num_context_tokens - num_words, self.embed_dim) * 0.02
+                init_embeds = torch.cat([init_embeds, padding], dim=0)
+
+            # Assign to context_tokens
+            self.context_tokens.data = init_embeds.to(self.device)
+
+        print(f"[CoOp] Initialized context tokens from words: '{init_words}'")
 
     def _prepare_class_token_embeddings(self):
         """
@@ -290,6 +343,10 @@ def main():
     # Model settings
     parser.add_argument('--model_name', type=str, default='ViT-B/32')
     parser.add_argument('--num_context_tokens', type=int, default=4, help='Number of learnable context tokens')
+    parser.add_argument('--init_method', type=str, default='random', choices=['random', 'words'],
+                        help='Context token initialization: random or words (from "a photo of a")')
+    parser.add_argument('--init_words', type=str, default='a photo of a',
+                        help='Words to use for initialization when init_method=words')
 
     # Prompt settings
     parser.add_argument('--prompt_json', type=str, default=None, help='Path to prompt.json (expert prompts)')
@@ -324,6 +381,9 @@ def main():
             if hasattr(args, key):
                 setattr(args, key, value)
         print(f"Loaded config from: {args.config}")
+
+    # ========== Set Random Seed for Reproducibility ==========
+    set_random_seed(args.seed)
 
     print("=" * 60)
     print("CoOp (Context Optimization) Training")
@@ -360,6 +420,10 @@ def main():
         prompt_json_path=args.prompt_json,
         device=device
     ).to(device)
+
+    # Initialize context tokens from words if specified
+    if args.init_method == 'words':
+        coop_model._init_context_from_words(args.init_words)
 
     # Print trainable parameters
     trainable = sum(p.numel() for p in coop_model.get_trainable_params())
