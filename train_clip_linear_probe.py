@@ -207,7 +207,7 @@ def main():
     # Get visual feature dimension
     with torch.no_grad():
         dummy_image = torch.randn(1, 3, 224, 224).to(device)
-        dummy_feature = clip_model.encode_image(dummy_image)
+        dummy_feature = clip_model.encode_image(dummy_image).float()  # Convert to float32
         feature_dim = dummy_feature.shape[-1]
 
     print(f"Feature dimension: {feature_dim}")
@@ -272,7 +272,7 @@ def main():
 
             # Extract features (frozen)
             with torch.no_grad():
-                features = clip_model.encode_image(images)
+                features = clip_model.encode_image(images).float()  # Convert to float32
 
             # Linear classification
             logits = classifier(features)
@@ -305,7 +305,7 @@ def main():
                 images = images.to(device)
                 labels = labels.to(device)
 
-                features = clip_model.encode_image(images)
+                features = clip_model.encode_image(images).float()  # Convert to float32
                 logits = classifier(features)
                 _, preds = logits.max(1)
                 val_correct += preds.eq(labels).sum().item()
@@ -361,7 +361,7 @@ def main():
             images = images.to(device)
             labels = labels.to(device)
 
-            features = clip_model.encode_image(images)
+            features = clip_model.encode_image(images).float()  # Convert to float32
             logits = classifier(features)
             _, preds = logits.max(1)
 
