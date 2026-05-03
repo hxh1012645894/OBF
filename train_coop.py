@@ -633,12 +633,6 @@ def main():
             'prompt_json': args.prompt_json,
             'seed': args.seed,
         }, latest_path)
-                'num_context_tokens': args.num_context_tokens,
-                'model_name': args.model_name,
-                'num_classes': args.num_classes,
-                'val_acc': val_acc,
-            }, save_path)
-            print(f"  -> Saved best model (Val Acc: {val_acc:.4f})")
 
     # ========== 6. Final Results ==========
     print("\n" + "=" * 60)
