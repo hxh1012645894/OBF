@@ -424,7 +424,6 @@ def main():
             'num_labels_per_class': args.num_labels_per_class,
             'seed': args.seed,
         }, latest_path)
-            print(f"  -> Saved best model (Val Acc: {val_acc:.4f})")
 
     # ========== 6. Final Results ==========
     print("\n" + "=" * 60)
