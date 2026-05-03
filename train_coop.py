@@ -118,11 +118,10 @@ class CoOpModel(nn.Module):
         for param in self.clip_model.parameters():
             param.requires_grad = False
 
-        # Get embedding dimension from visual encoder
+        # Get embedding dimension from text encoder (transformer_width)
+        # This is the dimension of token embeddings, positional embeddings, and context tokens
         with torch.no_grad():
-            dummy = torch.randn(1, 3, 224, 224).to(device)
-            visual_feat = self.clip_model.encode_image(dummy)
-        self.embed_dim = visual_feat.shape[-1]
+            self.embed_dim = self.clip_model.ln_final.weight.shape[0]  # transformer_width
 
         # ========== Learnable Context Tokens (CoOp) ==========
         # Initialize with random normal (following CoOp paper)
@@ -298,16 +297,20 @@ class CoOpModel(nn.Module):
                 pos_embed = self.clip_model.positional_embedding[:seq_len]
                 combined = combined + pos_embed
 
+            # Get dtype from CLIP model
+            dtype = self.clip_model.dtype
+
             # Pass through transformer
-            combined = combined.unsqueeze(0)  # [1, seq_len, embed_dim]
+            # CLIP transformer expects LND format (seq_len, batch, dim)
+            x = combined.type(dtype).unsqueeze(1)  # [seq_len, 1, embed_dim] (LND)
+            x = self.clip_model.transformer(x)  # Pass through transformer
+            x = x.squeeze(1)  # [seq_len, embed_dim] (back to NLD format with batch=1)
 
-            with torch.no_grad():
-                # CLIP text encoder layers
-                x = combined.type(self.clip_model.conv1.weight.dtype)
-                x = self.clip_model.ln_final(x)
+            # Apply ln_final
+            x = self.clip_model.ln_final(x).type(dtype)  # [seq_len, embed_dim]
 
-                # Take EOS token representation (last token)
-                text_feat = x[0, -1, :] @ self.clip_model.text_projection
+            # Take last token (EOS) representation and apply text_projection
+            text_feat = x[-1, :] @ self.clip_model.text_projection
 
             text_feat = F.normalize(text_feat, dim=-1)
             text_features_list.append(text_feat)
