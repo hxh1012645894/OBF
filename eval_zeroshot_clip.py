@@ -92,8 +92,26 @@ SIMPLE_TEMPLATES = [
 ]
 
 
-def load_prompt_json(json_path):
-    """Load class prompts from JSON file (detailed expert prompts)."""
+def load_prompt_json(json_path, use_labels=True):
+    """
+    Load class prompts from JSON file (detailed expert prompts).
+
+    Supports two formats:
+    1. Structured format (prefix + Contour + Pattern):
+       - With labels: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
+       - Without labels: "{prefix} {Contour} {Pattern}"
+    2. Natural format (single description field):
+       - "{description}"
+
+    Args:
+        json_path: Path to prompt JSON file
+        use_labels: Whether to add [Contour] and [Pattern] labels (default True)
+
+    Returns:
+        class_names: List of class names
+        prompts: List of full prompt strings
+        sorted_keys: Sorted class IDs
+    """
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -106,8 +124,23 @@ def load_prompt_json(json_path):
     for key in sorted_keys:
         info = data[key]
         class_names.append(info.get('class_name', key))
-        # Build prompt: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
-        prompt = f"{info['prefix']} [Contour]: {info['Contour']} [Pattern]: {info['Pattern']}"
+
+        # Check format: structured (prefix/Contour/Pattern) or natural (description)
+        if 'description' in info:
+            # Natural format - single description field
+            prompt = info['description']
+        elif 'prefix' in info and 'Contour' in info and 'Pattern' in info:
+            # Structured format - concatenate parts
+            if use_labels:
+                # With labels: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
+                prompt = f"{info['prefix']} [Contour]: {info['Contour']} [Pattern]: {info['Pattern']}"
+            else:
+                # Without labels: natural flow "{prefix} {Contour} {Pattern}"
+                prompt = f"{info['prefix']} {info['Contour']} {info['Pattern']}"
+        else:
+            # Fallback: use class name
+            prompt = f"a photo of {info.get('class_name', key)}"
+
         prompts.append(prompt)
 
     return class_names, prompts, sorted_keys
@@ -187,8 +220,10 @@ def main():
     parser.add_argument('--prompt_json', type=str, default=None,
                         help='Path to prompt.json (expert prompts)')
     parser.add_argument('--prompt_mode', type=str, default='expert',
-                        choices=['expert', 'clip_full', 'clip_simple', 'clip_single'],
-                        help='Prompt mode')
+                        choices=['expert', 'expert_labeled', 'expert_natural', 'clip_full', 'clip_simple', 'clip_single'],
+                        help='Prompt mode: expert_labeled=[Contour]: labels, expert_natural=natural flow')
+    parser.add_argument('--use_labels', type=bool, default=True,
+                        help='Whether to add [Contour] and [Pattern] labels in structured prompts')
     parser.add_argument('--class_names', type=str, default=None,
                         help='Comma-separated class names')
 
@@ -244,17 +279,31 @@ def main():
     prompts = None
     class_ids = None
 
-    if args.prompt_mode == 'expert':
+    if args.prompt_mode in ['expert', 'expert_labeled', 'expert_natural']:
         # Use detailed expert prompts from JSON
+        # Determine which JSON file and whether to use labels
         if args.prompt_json is None:
-            raise ValueError("--prompt_json is required for 'expert' mode")
+            # Auto-select based on prompt_mode
+            if args.prompt_mode == 'expert_natural':
+                args.prompt_json = './semilearn/nets/clip_lora_coop/prompt_natural.json'
+                args.use_labels = False
+            else:
+                args.prompt_json = './semilearn/nets/clip_lora_coop/prompt.json'
+                args.use_labels = True
 
-        class_names, prompts, class_ids = load_prompt_json(args.prompt_json)
+        # For expert_labeled/expert_natural, override use_labels
+        if args.prompt_mode == 'expert_labeled':
+            args.use_labels = True
+        elif args.prompt_mode == 'expert_natural':
+            args.use_labels = False
+
+        class_names, prompts, class_ids = load_prompt_json(args.prompt_json, use_labels=args.use_labels)
         print(f"Using expert prompts from: {args.prompt_json}")
+        print(f"Label mode: {'with [Contour]/[Pattern] labels' if args.use_labels else 'natural flow (no labels)'}")
         print(f"Classes ({len(class_names)}):")
         for cid, name in zip(class_ids, class_names):
             print(f"  {cid} -> {name}")
-        print(f"\nExample prompt: {prompts[0][:100]}...")
+        print(f"\nExample prompt:\n  {prompts[0]}")
 
         # Tokenize and encode
         text_tokens = clip_tokenize(prompts, truncate=True).to(device)
