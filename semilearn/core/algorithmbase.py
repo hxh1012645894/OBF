@@ -177,25 +177,131 @@ class AlgorithmBase:
         set optimizer for algorithm
         """
         self.print_fn("Create optimizer and scheduler")
-        optimizer = get_optimizer(self.model, self.args.optim, self.args.lr, self.args.momentum, self.args.weight_decay, self.args.layer_decay)
-        scheduler = get_cosine_schedule_with_warmup(optimizer,
-                                                    self.num_train_iter,
-                                                    num_warmup_steps=self.args.num_warmup_iter)
+
+        # Check if using CLIP-based model
+        if 'clip' in self.args.net.lower():
+            # For CLIP models, use different weight decay settings
+            # Context tokens typically don't use weight decay in CoOp
+            no_decay = set()
+            if hasattr(self.model, 'no_weight_decay'):
+                no_decay = self.model.no_weight_decay()
+
+            # Get trainable parameters with proper weight decay handling
+            optimizer_grouped_parameters = []
+            for name, param in self.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+
+                # Check if this parameter should skip weight decay
+                skip_wd = False
+                for nd_name in no_decay:
+                    if nd_name in name:
+                        skip_wd = True
+                        break
+
+                if skip_wd:
+                    optimizer_grouped_parameters.append({
+                        'params': [param],
+                        'weight_decay': 0.0,
+                        'lr': self.args.lr
+                    })
+                else:
+                    optimizer_grouped_parameters.append({
+                        'params': [param],
+                        'weight_decay': self.args.weight_decay,
+                        'lr': self.args.lr
+                    })
+
+            # Use AdamW for CLIP models (better for transformer-based models)
+            if self.args.optim == 'AdamW':
+                optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=self.args.lr, weight_decay=self.args.weight_decay)
+            elif self.args.optim == 'Adam':
+                optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=self.args.lr, weight_decay=self.args.weight_decay)
+            else:
+                # Default to AdamW for CLIP even if SGD is specified
+                self.print_fn("[CLIP] Using AdamW optimizer (recommended for CLIP)")
+                optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=self.args.lr, weight_decay=self.args.weight_decay)
+
+            scheduler = get_cosine_schedule_with_warmup(optimizer,
+                                                        self.num_train_iter,
+                                                        num_warmup_steps=self.args.num_warmup_iter)
+            self.print_fn(f"[CLIP] Optimizer created with {len(optimizer_grouped_parameters)} parameter groups")
+        else:
+            optimizer = get_optimizer(self.model, self.args.optim, self.args.lr, self.args.momentum, self.args.weight_decay, self.args.layer_decay)
+            scheduler = get_cosine_schedule_with_warmup(optimizer,
+                                                        self.num_train_iter,
+                                                        num_warmup_steps=self.args.num_warmup_iter)
         return optimizer, scheduler
 
     def set_model(self):
         """
         initialize model
         """
-        model = self.net_builder(num_classes=self.num_classes, pretrained=self.args.use_pretrain, pretrained_path=self.args.pretrain_path)
+        # Check if using CLIP-based model (clip_lora_coop variants)
+        if 'clip' in self.args.net.lower():
+            # Import CLIPLoRACoOp models
+            from semilearn.nets.clip_lora_coop import clip_lora_coop
+
+            # Build model with CLIP-specific arguments
+            model = self.net_builder(
+                num_classes=self.num_classes,
+                pretrained=self.args.use_pretrain,
+                pretrained_path=self.args.pretrain_path,
+                prompt_json_path=self.args.prompt_json_path,
+                use_lora=self.args.use_lora if hasattr(self.args, 'use_lora') else True,
+                use_coop=self.args.use_coop if hasattr(self.args, 'use_coop') else True,
+                freeze_vision=self.args.freeze_vision if hasattr(self.args, 'freeze_vision') else True,
+                use_linear_probe=self.args.use_linear_probe if hasattr(self.args, 'use_linear_probe') else False,
+                lora_r=self.args.lora_r if hasattr(self.args, 'lora_r') else 8,
+                lora_alpha=self.args.lora_alpha if hasattr(self.args, 'lora_alpha') else 16,
+                lora_dropout=self.args.lora_dropout if hasattr(self.args, 'lora_dropout') else 0.1,
+                num_context_tokens=self.args.num_context_tokens if hasattr(self.args, 'num_context_tokens') else 4,
+                temperature=self.args.coop_temperature if hasattr(self.args, 'coop_temperature') else 0.07,
+                pretrained_model_name=self.args.clip_model_name if hasattr(self.args, 'clip_model_name') else 'openai/clip-vit-base-patch16',
+                proj_size=self.args.proj_size if hasattr(self.args, 'proj_size') else None,
+            )
+            self.print_fn(f"[CLIP] Model initialized with mode: {model._get_mode_name()}")
+            model.print_trainable_parameters()
+        else:
+            # Standard model initialization for non-CLIP models
+            model = self.net_builder(num_classes=self.num_classes, pretrained=self.args.use_pretrain, pretrained_path=self.args.pretrain_path)
         return model
 
     def set_ema_model(self):
         """
         initialize ema model from model
         """
-        ema_model = self.net_builder(num_classes=self.num_classes)
-        ema_model.load_state_dict(self.model.state_dict())
+        # Check if using CLIP-based model
+        if 'clip' in self.args.net.lower():
+            from semilearn.nets.clip_lora_coop import clip_lora_coop
+            # For CLIP models, EMA needs special handling due to LoRA adapters
+            ema_model = self.net_builder(
+                num_classes=self.num_classes,
+                pretrained=self.args.use_pretrain,
+                pretrained_path=self.args.pretrain_path,
+                prompt_json_path=self.args.prompt_json_path,
+                use_lora=self.args.use_lora if hasattr(self.args, 'use_lora') else True,
+                use_coop=self.args.use_coop if hasattr(self.args, 'use_coop') else True,
+                freeze_vision=self.args.freeze_vision if hasattr(self.args, 'freeze_vision') else True,
+                use_linear_probe=self.args.use_linear_probe if hasattr(self.args, 'use_linear_probe') else False,
+                lora_r=self.args.lora_r if hasattr(self.args, 'lora_r') else 8,
+                lora_alpha=self.args.lora_alpha if hasattr(self.args, 'lora_alpha') else 16,
+                lora_dropout=self.args.lora_dropout if hasattr(self.args, 'lora_dropout') else 0.1,
+                num_context_tokens=self.args.num_context_tokens if hasattr(self.args, 'num_context_tokens') else 4,
+                temperature=self.args.coop_temperature if hasattr(self.args, 'coop_temperature') else 0.07,
+                pretrained_model_name=self.args.clip_model_name if hasattr(self.args, 'clip_model_name') else 'openai/clip-vit-base-patch16',
+                proj_size=self.args.proj_size if hasattr(self.args, 'proj_size') else None,
+            )
+            # Copy trainable parameters only (LoRA + CoOp context tokens)
+            ema_state_dict = {}
+            for name, param in self.model.named_parameters():
+                if param.requires_grad:
+                    ema_state_dict[name] = param.data.clone()
+            ema_model.load_state_dict(ema_state_dict, strict=False)
+            self.print_fn("[CLIP] EMA model initialized with trainable parameters only")
+        else:
+            ema_model = self.net_builder(num_classes=self.num_classes)
+            ema_model.load_state_dict(self.model.state_dict())
         return ema_model
 
     def set_hooks(self):

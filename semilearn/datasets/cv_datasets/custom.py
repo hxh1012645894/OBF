@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
+# Custom dataset for CLIP-based models with folder structure
 
 import os
 import gc
-import copy
-import json
 import random
 from torchvision.datasets import ImageFolder
 from PIL import Image
@@ -14,14 +13,10 @@ from semilearn.datasets.augmentation import RandAugment, RandomResizedCropAndInt
 from semilearn.datasets.cv_datasets.datasetbase import BasicDataset
 
 
+# CLIP standard normalization
 mean, std = {}, {}
-# ImageNet standard normalization
-mean['imagenet'] = [0.485, 0.456, 0.406]
-std['imagenet'] = [0.229, 0.224, 0.225]
-
-# CLIP normalization (for CLIP-based models)
-mean['clip'] = [0.48145466, 0.4578275, 0.40821073]
-std['clip'] = [0.26862954, 0.26130258, 0.27577711]
+mean['custom'] = [0.48145466, 0.4578275, 0.40821073]  # CLIP mean
+std['custom'] = [0.26862954, 0.26130258, 0.27577711]  # CLIP std
 
 
 def accimage_loader(path):
@@ -29,12 +24,10 @@ def accimage_loader(path):
     try:
         return accimage.Image(path)
     except IOError:
-        # Potentially a decoding problem, fall back to PIL.Image
         return pil_loader(path)
 
 
 def pil_loader(path):
-    # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
     with open(path, 'rb') as f:
         img = Image.open(f)
         return img.convert('RGB')
@@ -48,37 +41,36 @@ def default_loader(path):
         return pil_loader(path)
 
 
-def get_imagenet(args, alg, name, num_labels, num_classes, data_dir='./data', include_lb_to_ulb=True):
+def get_custom(args, alg, name, num_labels, num_classes, data_dir='./data', include_lb_to_ulb=True):
     """
-    Get ImageNet-style dataset with folder structure.
+    Get custom dataset for CLIP-based models.
+
+    Supports folder structure:
+        data_dir/train/01/*.jpg
+        data_dir/train/02/*.jpg
+        ...
+        data_dir/val/01/*.jpg
+        ...
 
     Args:
-        args: arguments containing img_size, crop_ratio, and optionally use_clip_norm
+        args: arguments
         alg: algorithm name
-        name: dataset name ('imagenet' or 'imagenet127')
-        num_labels: number of labeled samples (per class if per_class_labels=True, else total)
+        name: dataset name (used for subfolder)
+        num_labels: number of labeled samples per class
         num_classes: number of classes
-        data_dir: data directory path
+        data_dir: data directory
         include_lb_to_ulb: whether to include labeled data in unlabeled set
-
-    Note:
-        If args.use_clip_norm is True, uses CLIP normalization instead of ImageNet normalization.
-        For CLIP-based models (clip_lora_coop), use_clip_norm should be set to True.
     """
     img_size = args.img_size
     crop_ratio = args.crop_ratio
 
-    # Select normalization based on use_clip_norm flag
-    norm_type = 'clip' if hasattr(args, 'use_clip_norm') and args.use_clip_norm else 'imagenet'
-    use_mean = mean[norm_type]
-    use_std = std[norm_type]
-
+    # Use CLIP normalization
     transform_weak = transforms.Compose([
         transforms.Resize((int(math.floor(img_size / crop_ratio)), int(math.floor(img_size / crop_ratio)))),
         transforms.RandomCrop((img_size, img_size)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(use_mean, use_std)
+        transforms.Normalize(mean['custom'], std['custom'])
     ])
 
     transform_medium = transforms.Compose([
@@ -87,7 +79,7 @@ def get_imagenet(args, alg, name, num_labels, num_classes, data_dir='./data', in
         transforms.RandomHorizontalFlip(),
         RandAugment(1, 10),
         transforms.ToTensor(),
-        transforms.Normalize(use_mean, use_std)
+        transforms.Normalize(mean['custom'], std['custom'])
     ])
 
     transform_strong = transforms.Compose([
@@ -96,45 +88,85 @@ def get_imagenet(args, alg, name, num_labels, num_classes, data_dir='./data', in
         transforms.RandomHorizontalFlip(),
         RandAugment(3, 10),
         transforms.ToTensor(),
-        transforms.Normalize(use_mean, use_std)
+        transforms.Normalize(mean['custom'], std['custom'])
     ])
 
     transform_val = transforms.Compose([
         transforms.Resize(math.floor(int(img_size / crop_ratio))),
         transforms.CenterCrop(img_size),
         transforms.ToTensor(),
-        transforms.Normalize(use_mean, use_std)
+        transforms.Normalize(mean['custom'], std['custom'])
     ])
 
-    data_dir = os.path.join(data_dir, name.lower())
+    # Data directory structure
+    base_dir = os.path.join(data_dir, name.lower()) if name.lower() != 'custom' else data_dir
 
-    dataset = ImagenetDataset(root=os.path.join(data_dir, "train"), transform=transform_weak, ulb=False, alg=alg)
-    percentage = num_labels / len(dataset)
+    # Check for train/val folders
+    train_dir = os.path.join(base_dir, "train")
+    val_dir = os.path.join(base_dir, "val")
 
-    lb_dset = ImagenetDataset(root=os.path.join(data_dir, "train"), transform=transform_weak, ulb=False, alg=alg, percentage=percentage)
+    if not os.path.exists(train_dir):
+        # If no train folder, use base_dir directly
+        train_dir = base_dir
 
-    ulb_dset = ImagenetDataset(root=os.path.join(data_dir, "train"), transform=transform_weak, alg=alg, ulb=True, medium_transform=transform_medium, strong_transform=transform_strong, include_lb_to_ulb=include_lb_to_ulb, lb_index=lb_dset.lb_idx)
+    if not os.path.exists(val_dir):
+        # If no val folder, use train_dir for evaluation
+        val_dir = train_dir
 
-    eval_dset = ImagenetDataset(root=os.path.join(data_dir, "val"), transform=transform_val, alg=alg, ulb=False)
+    # Create datasets
+    dataset = CustomDataset(root=train_dir, transform=transform_weak, ulb=False, alg=alg)
+
+    # Calculate percentage for labeled data
+    total_samples = len(dataset)
+    samples_per_class = total_samples // num_classes
+    percentage = num_labels / samples_per_class if samples_per_class > 0 else 1.0
+
+    lb_dset = CustomDataset(
+        root=train_dir,
+        transform=transform_weak,
+        ulb=False,
+        alg=alg,
+        percentage=percentage
+    )
+
+    ulb_dset = CustomDataset(
+        root=train_dir,
+        transform=transform_weak,
+        alg=alg,
+        ulb=True,
+        medium_transform=transform_medium,
+        strong_transform=transform_strong,
+        include_lb_to_ulb=include_lb_to_ulb,
+        lb_index=lb_dset.lb_idx
+    )
+
+    eval_dset = CustomDataset(root=val_dir, transform=transform_val, alg=alg, ulb=False)
 
     return lb_dset, ulb_dset, eval_dset
-    
 
 
-class ImagenetDataset(BasicDataset, ImageFolder):
-    def __init__(self, root, transform, ulb, alg, medium_transform=None, strong_transform=None, percentage=-1, include_lb_to_ulb=True, lb_index=None):
+class CustomDataset(BasicDataset, ImageFolder):
+    """
+    Custom dataset for CLIP-based models.
+    Inherits from BasicDataset and ImageFolder for folder-based data loading.
+    """
+
+    def __init__(self, root, transform, ulb, alg, medium_transform=None, strong_transform=None,
+                 percentage=-1, include_lb_to_ulb=True, lb_index=None, num_classes=None):
         self.alg = alg
         self.is_ulb = ulb
         self.percentage = percentage
         self.transform = transform
         self.root = root
         self.include_lb_to_ulb = include_lb_to_ulb
-        self.lb_index = lb_index
+        self.lb_index = lb_index if lb_index is not None else {}
 
         is_valid_file = None
         extensions = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp')
+
         classes, class_to_idx = self.find_classes(self.root)
         samples = self.make_dataset(self.root, class_to_idx, extensions, is_valid_file)
+
         if len(samples) == 0:
             msg = "Found 0 files in subfolders of: {}\n".format(self.root)
             if extensions is not None:
@@ -152,12 +184,14 @@ class ImagenetDataset(BasicDataset, ImageFolder):
         self.medium_transform = medium_transform
         if self.medium_transform is None:
             if self.is_ulb:
-                assert self.alg not in ['sequencematch'], f"alg {self.alg} requires strong augmentation"
+                assert self.alg not in ['sequencematch'], f"alg {self.alg} requires medium augmentation"
+
         self.strong_transform = strong_transform
         if self.strong_transform is None:
             if self.is_ulb:
-                assert self.alg not in ['fullysupervised', 'supervised', 'pseudolabel', 'vat', 'pimodel', 'meanteacher', 'mixmatch', 'refixmatch'], f"alg {self.alg} requires strong augmentation"
-
+                assert self.alg not in ['fullysupervised', 'supervised', 'pseudolabel', 'vat',
+                                       'pimodel', 'meanteacher', 'mixmatch', 'refixmatch'],
+                                       f"alg {self.alg} requires strong augmentation"
 
     def __sample__(self, index):
         path = self.data[index]
@@ -165,44 +199,47 @@ class ImagenetDataset(BasicDataset, ImageFolder):
         target = self.targets[index]
         return sample, target
 
-    def make_dataset(
-            self,
-            directory,
-            class_to_idx,
-            extensions=None,
-            is_valid_file=None,
-    ):
+    def make_dataset(self, directory, class_to_idx, extensions=None, is_valid_file=None):
         instances = []
         directory = os.path.expanduser(directory)
+
         both_none = extensions is None and is_valid_file is None
         both_something = extensions is not None and is_valid_file is not None
+
         if both_none or both_something:
             raise ValueError("Both extensions and is_valid_file cannot be None or not None at the same time")
+
         if extensions is not None:
             def is_valid_file(x: str) -> bool:
                 return x.lower().endswith(extensions)
-        
+
         lb_idx = {}
         for target_class in sorted(class_to_idx.keys()):
             class_index = class_to_idx[target_class]
             target_dir = os.path.join(directory, target_class)
+
             if not os.path.isdir(target_dir):
                 continue
+
             for root, _, fnames in sorted(os.walk(target_dir, followlinks=True)):
                 random.shuffle(fnames)
+
                 if self.percentage != -1:
                     fnames = fnames[:int(len(fnames) * self.percentage)]
+
                 if self.percentage != -1:
                     lb_idx[target_class] = fnames
+
                 for fname in fnames:
                     if not self.include_lb_to_ulb:
-                        if fname in self.lb_index[target_class]:
+                        if target_class in self.lb_index and fname in self.lb_index[target_class]:
                             continue
+
                     path = os.path.join(root, fname)
                     if is_valid_file(path):
                         item = path, class_index
                         instances.append(item)
+
         gc.collect()
         self.lb_idx = lb_idx
         return instances
-

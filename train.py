@@ -111,6 +111,47 @@ def get_config():
     parser.add_argument("--pretrain_path", default="", type=str)
 
     """
+    CLIP + LoRA + CoOp Configurations
+    """
+    # CLIP model settings
+    parser.add_argument("--clip_model_name", type=str, default="openai/clip-vit-base-patch16",
+                        help="HuggingFace CLIP model name")
+    parser.add_argument("--prompt_json_path", type=str, default=None,
+                        help="Path to prompt.json for class descriptions")
+
+    # LoRA settings
+    parser.add_argument("--use_lora", type=str2bool, default=True,
+                        help="Whether to use LoRA on vision encoder")
+    parser.add_argument("--lora_r", type=int, default=8,
+                        help="LoRA rank")
+    parser.add_argument("--lora_alpha", type=int, default=16,
+                        help="LoRA alpha")
+    parser.add_argument("--lora_dropout", type=float, default=0.1,
+                        help="LoRA dropout rate")
+
+    # CoOp settings
+    parser.add_argument("--use_coop", type=str2bool, default=True,
+                        help="Whether to use learnable soft prompts (CoOp)")
+    parser.add_argument("--num_context_tokens", type=int, default=4,
+                        help="Number of learnable context tokens for CoOp")
+    parser.add_argument("--coop_temperature", type=float, default=0.07,
+                        help="Temperature for cosine similarity scaling")
+
+    # Mode switches for ablation experiments
+    parser.add_argument("--freeze_vision", type=str2bool, default=True,
+                        help="Whether to freeze vision backbone")
+    parser.add_argument("--use_linear_probe", type=str2bool, default=False,
+                        help="Whether to use linear classifier instead of multimodal")
+
+    # Data normalization for CLIP
+    parser.add_argument("--use_clip_norm", type=str2bool, default=False,
+                        help="Whether to use CLIP normalization instead of ImageNet normalization")
+
+    # Projection head for OBF-MANet
+    parser.add_argument("--proj_size", type=int, default=None,
+                        help="Projection size for OBF-MANet contrastive learning (64 recommended)")
+
+    """
     Algorithms Configurations
     """
 

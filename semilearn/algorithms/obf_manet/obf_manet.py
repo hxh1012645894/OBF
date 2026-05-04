@@ -181,6 +181,14 @@ class OBFMANet(AlgorithmBase):
             # ========== 8. Aggregate Total Loss ==========
             total_loss = sup_loss + self.lambda_u * unsup_loss + loss_mpc + loss_anl
 
+            # ========== 9. NaN Protection ==========
+            # Check for NaN values and replace with zero to prevent gradient explosion
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                self.print_fn(f"[WARNING] NaN/Inf detected at iteration {self.it}: "
+                              f"sup_loss={sup_loss.item():.4f}, unsup_loss={unsup_loss.item():.4f}, "
+                              f"mpc_loss={loss_mpc.item():.4f}, anl_loss={loss_anl.item():.4f}")
+                total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+
         out_dict = self.process_out_dict(loss=total_loss, feat=feat_dict)
         log_dict = self.process_log_dict(
             sup_loss=sup_loss.item(),
@@ -222,6 +230,12 @@ class OBFMANet(AlgorithmBase):
 
                 # Compute mean feature for this class
                 feature_mean = class_features.mean(dim=0)
+
+                # Add small noise for single-sample initialization to improve robustness
+                # This prevents the prototype from being too rigid when only 1 sample is available
+                if class_features.shape[0] == 1:
+                    noise = torch.randn_like(feature_mean) * 0.01
+                    feature_mean = feature_mean + noise
 
                 # L2 normalize the prototype
                 prototype = F.normalize(feature_mean, p=2, dim=0)
@@ -336,7 +350,7 @@ class OBFMANet(AlgorithmBase):
             ANL loss for negative learning
         """
         # Compute entropy H(p) for each sample
-        entropy = -torch.sum(probs_ulb_w * torch.log(probs_ulb_w + 1e-8), dim=1)
+        entropy = -torch.sum(probs_ulb_w * torch.log(probs_ulb_w.clamp(min=1e-6)), dim=1)
 
         # Entropy threshold: gamma * log(num_classes)
         entropy_threshold = self.gamma * math.log(self.num_classes)
@@ -375,22 +389,11 @@ class OBFMANet(AlgorithmBase):
         # lambda(t) = 1 - exp(-t / max_iter) approximated by linear warmup
         warmup_coef = min(1.0, self.it / (self.num_train_iter * 0.5))
 
-        # ANL loss: weighted cross entropy pushing away from non-target prototypes
-        # Target: all zeros (push away from all non-target classes)
-        # We use negative log of (1 - softmax_prob_for_non_target) as the loss
-
-        # For each sample, we want to minimize similarity with non-target prototypes
-        # Loss = -sum(weights * log(1 - softmax_prob))
-        # But a simpler formulation: cross entropy with uniform distribution over non-targets
-
-        # Alternative: push features away by maximizing distance = minimizing similarity
-        # Use cross entropy where we want the model to predict "no class" for non-targets
-
-        # Simpler formulation: weighted sum of similarities to non-targets
-        # Loss = sum_i sum_{j != target_i} w_ij * similarity_ij
-        # where w_ij = softmax over non-target similarities
-
-        weighted_non_target_sim = (negative_weights * similarity * non_target_mask).sum(dim=1)
+        # ANL loss: penalize positive similarity to non-target prototypes
+        # Use ReLU to only penalize when similarity > 0 (feature aligned with non-target)
+        # This avoids the negative loss issue when similarity is already negative (good state)
+        positive_sim = F.relu(similarity)  # only positive similarities are penalized
+        weighted_non_target_sim = (negative_weights * positive_sim * non_target_mask).sum(dim=1)
 
         # We want to minimize this, so take mean
         # Apply warmup coefficient

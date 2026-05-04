@@ -57,6 +57,7 @@ class CLIPLoRACoOp(nn.Module):
         temperature: float = 0.07,
         pretrained_model_name: str = 'openai/clip-vit-base-patch16',
         prompt_json_path: Optional[str] = None,
+        proj_size: Optional[int] = None,  # For OBF-MANet contrastive learning
         device: Optional[str] = None,
         **kwargs
     ):
@@ -67,6 +68,7 @@ class CLIPLoRACoOp(nn.Module):
         self.use_coop = use_coop
         self.freeze_vision = freeze_vision
         self.use_linear_probe = use_linear_probe
+        self.proj_size = proj_size  # 64 for OBF-MANet, None for no projection
 
         self.num_classes = num_classes
         self.num_context_tokens = num_context_tokens
@@ -112,6 +114,18 @@ class CLIPLoRACoOp(nn.Module):
         if self.use_linear_probe:
             # Use vision_hidden_size for linear classifier input
             self.classifier = nn.Linear(self.vision_hidden_size, num_classes)
+
+        # Projection head for OBF-MANet contrastive learning
+        # Projects vision_hidden_size (768) to proj_size (64)
+        if self.proj_size is not None:
+            self.projector = nn.Sequential(
+                nn.Linear(self.vision_hidden_size, self.vision_hidden_size // 2),
+                nn.ReLU(),
+                nn.Linear(self.vision_hidden_size // 2, self.proj_size)
+            )
+            print(f"[CLIP] Added projection head: {self.vision_hidden_size} -> {self.proj_size}")
+        else:
+            self.projector = None
 
         # ========== 3. Text Branch - CoOp (Context Optimization) ==========
         # Freeze all text encoder parameters (always frozen)
@@ -173,23 +187,21 @@ class CLIPLoRACoOp(nn.Module):
         """
         Build text prototypes from prompt.json file.
 
-        JSON format expected:
+        JSON format (natural language):
         {
-            "class_name": {
-                "prefix": "A close-up of the class_name fragment.",
-                "Contour": "The top edge is a smooth original curve...",
-                "Pattern": "It features a curved groove line..."
+            "01": {
+                "class_name": "Left Epiplastron",
+                "description": "A close-up photo of..."
             },
             ...
         }
 
         For each class:
-        1. Read structured attributes (prefix, Contour, Pattern) from JSON
-        2. Dynamically construct hard prompt: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
-        3. Tokenize and get token embeddings
-        4. Prepend learnable context tokens (CoOp) if use_coop=True
-        5. Pass through frozen text encoder
-        6. L2 normalize and store as text prototype
+        1. Read description from JSON
+        2. Tokenize and get token embeddings
+        3. Prepend learnable context tokens (CoOp) if use_coop=True
+        4. Pass through frozen text encoder
+        5. L2 normalize and store as text prototype
 
         Args:
             json_path (str): Path to prompt.json file
@@ -204,8 +216,9 @@ class CLIPLoRACoOp(nn.Module):
         with open(json_path, 'r', encoding='utf-8') as f:
             prompt_data = json.load(f)
 
-        # Extract class names
-        self.class_names = list(prompt_data.keys())
+        # Sort by numeric key and extract class names
+        sorted_keys = sorted(prompt_data.keys(), key=lambda x: int(x))
+        self.class_names = [prompt_data[k].get('class_name', k) for k in sorted_keys]
 
         # Ensure num_classes matches
         if len(self.class_names) != self.num_classes:
@@ -217,16 +230,16 @@ class CLIPLoRACoOp(nn.Module):
         # Build text embeddings for each class
         text_features_list = []
 
-        for class_name in self.class_names:
-            class_info = prompt_data[class_name]
+        for key in sorted_keys:
+            class_info = prompt_data[key]
 
-            # ========== Dynamically construct hard prompt ==========
-            # Format: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
-            prefix = class_info.get('prefix', f"A close-up of the {class_name} fragment.")
-            contour = class_info.get('Contour', '')
-            pattern = class_info.get('Pattern', '')
-
-            hard_prompt = f"{prefix} [Contour]: {contour} [Pattern]: {pattern}"
+            # ========== Use description field (natural format) ==========
+            if 'description' in class_info:
+                hard_prompt = class_info['description']
+            else:
+                # Fallback to class name
+                class_name = class_info.get('class_name', key)
+                hard_prompt = f"a photo of {class_name}"
 
             # Tokenize
             inputs = self.tokenizer(
@@ -476,10 +489,19 @@ class CLIPLoRACoOp(nn.Module):
             logits = cosine_sim / self.temperature
 
         # ========== Return Results ==========
+        # Compute projection features for OBF-MANet if projector exists
+        if self.projector is not None:
+            # Use raw visual_features (before normalization) for projection
+            proj_features = self.projector(visual_features)  # [B, proj_size]
+            proj_features_norm = F.normalize(proj_features, p=2, dim=-1)
+        else:
+            # No projection, use normalized visual features directly
+            proj_features_norm = visual_features_norm
+
         result_dict = {
             'logits': logits,
             'feat': visual_features_norm,
-            'proj_feat': visual_features_norm  # For compatibility with OBF-MANet
+            'proj_feat': proj_features_norm  # For compatibility with OBF-MANet
         }
 
         return result_dict
@@ -586,6 +608,7 @@ def clip_lora_coop(
     lora_dropout: float = 0.1,
     num_context_tokens: int = 4,
     temperature: float = 0.07,
+    proj_size: Optional[int] = None,  # For OBF-MANet contrastive learning
     **kwargs
 ) -> CLIPLoRACoOp:
     """
@@ -608,6 +631,7 @@ def clip_lora_coop(
         lora_dropout (float): LoRA dropout
         num_context_tokens (int): Number of CoOp context tokens
         temperature (float): Temperature for similarity scaling
+        proj_size (int): Projection size for OBF-MANet contrastive learning (default: None)
 
     Returns:
         CLIPLoRACoOp model instance
@@ -624,6 +648,7 @@ def clip_lora_coop(
         num_context_tokens=num_context_tokens,
         temperature=temperature,
         prompt_json_path=prompt_json_path,
+        proj_size=proj_size,
         **kwargs
     )
 

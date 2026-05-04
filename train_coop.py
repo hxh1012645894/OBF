@@ -195,12 +195,16 @@ class CoOpModel(nn.Module):
         for i, class_name in enumerate(self.class_names):
             # Build prompt text
             if self.prompt_data:
-                # Use expert prompts
+                # Use expert prompts (natural format: description field)
                 key = str(i + 1).zfill(2)  # "01", "02", ...
                 if key in self.prompt_data:
                     info = self.prompt_data[key]
-                    # Format: "{prefix} [Contour]: {Contour} [Pattern]: {Pattern}"
-                    prompt_text = f"{info['prefix']} [Contour]: {info['Contour']} [Pattern]: {info['Pattern']}"
+                    # Natural format: use description directly
+                    if 'description' in info:
+                        prompt_text = info['description']
+                    else:
+                        # Fallback to class name
+                        prompt_text = f"a photo of {class_name}"
                 else:
                     prompt_text = f"a photo of {class_name}"
             else:
