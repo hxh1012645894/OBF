@@ -77,7 +77,8 @@ class CLIPLoRACoOp(nn.Module):
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
 
         # ========== 1. Load Pretrained CLIP Model ==========
-        self.clip_model = CLIPModel.from_pretrained(pretrained_model_name)
+        # Use safetensors to avoid torch.load security vulnerability (requires torch>=2.6)
+        self.clip_model = CLIPModel.from_pretrained(pretrained_model_name, use_safetensors=True)
         self.processor = CLIPProcessor.from_pretrained(pretrained_model_name)
         self.tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_name)
 
