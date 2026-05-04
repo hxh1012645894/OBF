@@ -433,18 +433,8 @@ class CLIPLoRACoOp(nn.Module):
             position_ids = torch.arange(combined_embeds.shape[1], device=self.device).unsqueeze(0)
 
             with torch.no_grad():
-                # Try modern API first, fall back to manual if needed
-                try:
-                    text_outputs = self.clip_model.text_model(
-                        inputs_embeds=combined_embeds,
-                        position_ids=position_ids,
-                        return_dict=True
-                    )
-                    text_feature = text_outputs.pooler_output
-                except TypeError:
-                    # Fallback for older transformers
-                    text_feature = self._forward_text_encoder_legacy(combined_embeds, position_ids)
-
+                # Use legacy forward pass for custom embeddings (inputs_embeds not supported)
+                text_feature = self._forward_text_encoder_legacy(combined_embeds, position_ids)
                 text_feature = F.normalize(text_feature, p=2, dim=-1)
 
             text_features_list.append(text_feature)
