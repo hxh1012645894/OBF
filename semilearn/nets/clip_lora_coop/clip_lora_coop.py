@@ -117,14 +117,14 @@ class CLIPLoRACoOp(nn.Module):
             self.classifier = nn.Linear(self.vision_hidden_size, num_classes)
 
         # Projection head for OBF-MANet contrastive learning
-        # Projects vision_hidden_size (768) to proj_size (64)
+        # Projects embed_dim (512) to proj_size (64) - uses projected visual features
         if self.proj_size is not None:
             self.projector = nn.Sequential(
-                nn.Linear(self.vision_hidden_size, self.vision_hidden_size // 2),
+                nn.Linear(self.embed_dim, self.embed_dim // 2),
                 nn.ReLU(),
-                nn.Linear(self.vision_hidden_size // 2, self.proj_size)
+                nn.Linear(self.embed_dim // 2, self.proj_size)
             )
-            print(f"[CLIP] Added projection head: {self.vision_hidden_size} -> {self.proj_size}")
+            print(f"[CLIP] Added projection head: {self.embed_dim} -> {self.proj_size}")
         else:
             self.projector = None
 
@@ -463,10 +463,13 @@ class CLIPLoRACoOp(nn.Module):
         """
         # ========== Visual Feature Extraction ==========
         vision_outputs = self.clip_model.vision_model(pixel_values=x, return_dict=True)
-        visual_features = vision_outputs.pooler_output  # [B, vision_hidden_size]
+        visual_features = vision_outputs.pooler_output  # [B, vision_hidden_size=768]
+
+        # Apply visual projection to match text embedding dimension (768 → 512)
+        visual_features_proj = self.clip_model.visual_projection(visual_features)  # [B, embed_dim=512]
 
         # Normalize visual features
-        visual_features_norm = F.normalize(visual_features, p=2, dim=-1)
+        visual_features_norm = F.normalize(visual_features_proj, p=2, dim=-1)
 
         # ========== Output Routing ==========
         if self.use_linear_probe:
@@ -480,16 +483,16 @@ class CLIPLoRACoOp(nn.Module):
                     "build_simple_text_features() first, or set use_linear_probe=True."
                 )
 
-            # visual_features_norm: [B, embed_dim]
-            # text_prototypes: [num_classes, embed_dim] (already normalized)
+            # visual_features_norm: [B, embed_dim=512]
+            # text_prototypes: [num_classes, embed_dim=512] (already normalized)
             cosine_sim = torch.mm(visual_features_norm, self.text_prototypes.T)  # [B, num_classes]
             logits = cosine_sim / self.temperature
 
         # ========== Return Results ==========
         # Compute projection features for OBF-MANet if projector exists
         if self.projector is not None:
-            # Use raw visual_features (before normalization) for projection
-            proj_features = self.projector(visual_features)  # [B, proj_size]
+            # Use projected visual features (512 dim) for projection
+            proj_features = self.projector(visual_features_proj)  # [B, proj_size]
             proj_features_norm = F.normalize(proj_features, p=2, dim=-1)
         else:
             # No projection, use normalized visual features directly
@@ -511,11 +514,12 @@ class CLIPLoRACoOp(nn.Module):
             x (torch.Tensor): Input images [B, C, H, W]
 
         Returns:
-            visual_features (torch.Tensor): [B, embed_dim] normalized
+            visual_features (torch.Tensor): [B, embed_dim=512] normalized
         """
         vision_outputs = self.clip_model.vision_model(pixel_values=x, return_dict=True)
-        visual_features = vision_outputs.pooler_output
-        return F.normalize(visual_features, p=2, dim=-1)
+        visual_features = vision_outputs.pooler_output  # [B, 768]
+        visual_features_proj = self.clip_model.visual_projection(visual_features)  # [B, 512]
+        return F.normalize(visual_features_proj, p=2, dim=-1)
 
     def update_text_prototypes(self) -> None:
         """
