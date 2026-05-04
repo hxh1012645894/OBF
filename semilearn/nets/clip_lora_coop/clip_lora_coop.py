@@ -153,9 +153,15 @@ class CLIPLoRACoOp(nn.Module):
         # Move to device BEFORE building text features (so embeddings are on correct device)
         self.to(self.device)
 
-        # Load prompt.json if provided
+        # Load prompt.json if provided, otherwise build default text features
         if prompt_json_path is not None and os.path.exists(prompt_json_path):
             self.build_text_features(prompt_json_path)
+        elif not self.use_linear_probe:
+            # No prompt.json provided: build default text features using generic class names
+            # This is needed for multimodal classification mode
+            default_class_names = [f"class_{i}" for i in range(num_classes)]
+            self.build_simple_text_features(default_class_names)
+            print(f"[CLIP] Built default text features for {num_classes} classes (no prompt.json provided)")
 
         # Print configuration info
         self._print_mode_info()
