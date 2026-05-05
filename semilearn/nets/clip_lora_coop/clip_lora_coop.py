@@ -704,6 +704,11 @@ def clip_zero_shot(
     **kwargs
 ) -> CLIPLoRACoOp:
     """Zero-shot CLIP mode: frozen backbone, no LoRA, no CoOp."""
+    # Remove conflicting parameters from kwargs
+    kwargs.pop('use_lora', None)
+    kwargs.pop('use_coop', None)
+    kwargs.pop('freeze_vision', None)
+    kwargs.pop('use_linear_probe', None)
     return clip_lora_coop(
         num_classes=num_classes,
         pretrained=pretrained,
@@ -724,6 +729,11 @@ def clip_linear_probe(
     **kwargs
 ) -> CLIPLoRACoOp:
     """Linear probe mode: frozen vision backbone + linear classifier."""
+    # Remove conflicting parameters from kwargs
+    kwargs.pop('use_lora', None)
+    kwargs.pop('use_coop', None)
+    kwargs.pop('freeze_vision', None)
+    kwargs.pop('use_linear_probe', None)
     return clip_lora_coop(
         num_classes=num_classes,
         pretrained=pretrained,
@@ -744,6 +754,11 @@ def clip_coop_only(
     **kwargs
 ) -> CLIPLoRACoOp:
     """CoOp-only mode: no LoRA, only learnable soft prompts."""
+    # Remove conflicting parameters from kwargs
+    kwargs.pop('use_lora', None)
+    kwargs.pop('use_coop', None)
+    kwargs.pop('freeze_vision', None)
+    kwargs.pop('use_linear_probe', None)
     return clip_lora_coop(
         num_classes=num_classes,
         pretrained=pretrained,
@@ -765,6 +780,11 @@ def clip_lora_only(
     **kwargs
 ) -> CLIPLoRACoOp:
     """LoRA-only mode: LoRA on vision, no CoOp soft prompts."""
+    # Remove conflicting parameters from kwargs
+    kwargs.pop('use_lora', None)
+    kwargs.pop('use_coop', None)
+    kwargs.pop('freeze_vision', None)
+    kwargs.pop('use_linear_probe', None)
     return clip_lora_coop(
         num_classes=num_classes,
         pretrained=pretrained,
@@ -786,6 +806,11 @@ def clip_full_finetune(
     **kwargs
 ) -> CLIPLoRACoOp:
     """Full fine-tuning mode: unfreeze entire vision backbone."""
+    # Remove conflicting parameters from kwargs
+    kwargs.pop('use_lora', None)
+    kwargs.pop('use_coop', None)
+    kwargs.pop('freeze_vision', None)
+    kwargs.pop('use_linear_probe', None)
     return clip_lora_coop(
         num_classes=num_classes,
         pretrained=pretrained,
