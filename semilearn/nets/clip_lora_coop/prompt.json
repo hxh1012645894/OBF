@@ -1,38 +1,38 @@
 {
   "01": {
     "class_name": "Left Epiplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Epiplastron. The top edge is a smooth original curve, while the inner edges are jagged sutures. It features a curved groove line sweeping downwards to the right."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Epiplastron. Top edge smooth curved, inner edges jagged suture. Curved groove line sweeping downwards to the right."
   },
   "02": {
     "class_name": "Right Epiplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Epiplastron. The top edge is a smooth original curve, while the inner edges are jagged sutures. It features a curved groove line sweeping downwards to the left."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Epiplastron. Top edge smooth curved, inner edges jagged suture. Curved groove line sweeping downwards to the left."
   },
   "03": {
     "class_name": "Left Hyoplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Hyoplastron. The right edge is a straight vertical midline suture, while the left edge is a curved bridge suture. The top inner corner has a notch to fit the central diamond bone. Characterized by horizontal texture, often showing two parallel groove lines."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Hyoplastron. Right edge straight vertical midline suture, left edge curved bridge suture, top inner corner notched. Horizontal texture with two parallel groove lines."
   },
   "04": {
     "class_name": "Right Hyoplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Hyoplastron. The left edge is a straight vertical midline suture, while the right edge is a curved bridge suture. The top inner corner has a notch to fit the central diamond bone. Characterized by horizontal texture, often showing two parallel groove lines."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Hyoplastron. Left edge straight vertical midline suture, right edge curved bridge suture, top inner corner notched. Horizontal texture with two parallel groove lines."
   },
   "05": {
     "class_name": "Left Hypoplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Hypoplastron. The right edge is a straight vertical suture. The top edge is horizontal, and the bottom edge is irregular where it meets the tail bone. Features a single horizontal groove line that forms a slightly backward-convex arc."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Hypoplastron. Right edge straight vertical suture, top edge horizontal, bottom edge irregular. Single horizontal groove line forming backward-convex arc."
   },
   "06": {
     "class_name": "Right Hypoplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Hypoplastron. The left edge is a straight vertical suture. The top edge is horizontal, and the bottom edge is irregular where it meets the tail bone. Features a single horizontal groove line that forms a slightly backward-convex arc."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Hypoplastron. Left edge straight vertical suture, top edge horizontal, bottom edge irregular. Single horizontal groove line forming backward-convex arc."
   },
   "07": {
     "class_name": "Left Xiphiplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Xiphiplastron. The top edge is jagged, and the bottom tip is usually concave or pointed. Features a groove line sloping steeply downwards to the left."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Left Xiphiplastron. Top edge jagged suture, bottom tip concave or pointed. Groove line sloping steeply downwards to the left."
   },
   "08": {
     "class_name": "Right Xiphiplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Xiphiplastron. The top edge is jagged, and the bottom tip is usually concave or pointed. Features a groove line sloping steeply downwards to the right."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Right Xiphiplastron. Top edge jagged suture, bottom tip concave or pointed. Groove line sloping steeply downwards to the right."
   },
   "09": {
     "class_name": "Entoplastron",
-    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Entoplastron. The fragment has a rhomboid or diamond-shaped outline formed by jagged suture lines. The surface features a cross-shaped intersection of grooves."
+    "description": "A close-up photo of an ancient Chinese turtle plastron fragment, specifically the Entoplastron. Rhomboid or diamond-shaped outline with jagged suture edges. Cross-shaped intersection of grooves on surface."
   }
 }
